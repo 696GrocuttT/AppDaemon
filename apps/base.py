@@ -7,7 +7,7 @@ import hassapi as hass
 #
 
 
-class HelloWorld(hass.Hass):
+class BaseInactiveAutoOff(hass.Hass):
     def initialize(self):
-        self.log("Hello from AppDaemon")
+        self.log("Hello from AppDaemon. Woof", log="main_log")
         self.log("You are now ready to run Apps!")

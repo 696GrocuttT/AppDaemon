@@ -3,7 +3,7 @@ from datetime import datetime
 from datetime import timedelta
 
 
-class BaseInactiveAutoOff(hass.Hass):
+class BasicInactiveAutoOff(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))
         self.inputEntityName      = self.args["inputEntity"]
@@ -51,6 +51,11 @@ class BaseInactiveAutoOff(hass.Hass):
             self.log("condition \"" + condition[0] + "\" is "  +  str(conditionVal))
         return conditionsPassed
         
+        
+    # Getter for off delay so we can easily override it in a subclass
+    def offDelay(self):
+        return self.autoOffTimeDelay
+
 
     def input_changed(self, entity, attribute, old, new, kwargs):
         self.log("input " + old + " --> " + new + ". auto " + str(self.auto))
@@ -59,7 +64,7 @@ class BaseInactiveAutoOff(hass.Hass):
             if self.timer_running(self.timer):
                 self.cancel_timer(self.timer)
         if new == "on":
-            # Only turn on the light if its off, and its not recently been manually turned off
+            # Only turn on the output if its off, and its not recently been manually turned off
             if ( self.get_state(self.outputEntityName) == "off" and 
                  (self.auto or (datetime.now() - self.outputLastChanged) > self.manualOffToAutoDelay) ):
                 # Evaluate any additional conditions
@@ -67,8 +72,8 @@ class BaseInactiveAutoOff(hass.Hass):
                     self.pendingAuto = True
                     self.turn_on(self.outputEntityName)
         else:
-            # schedule a timer to  turn the lights off after a delay
-            self.timer = self.run_in(self.light_off, self.autoOffTimeDelay)
+            # schedule a timer to turn the output off after a delay
+            self.timer = self.run_in(self.output_off, self.offDelay())
 
 
     def output_changed(self, entity, attribute, old, new, kwargs):
@@ -78,11 +83,36 @@ class BaseInactiveAutoOff(hass.Hass):
         self.outputLastChanged = datetime.now()
 
 
-    def light_off(self, kwargs):
+    def output_off(self, kwargs):
         self.log("Off timer fired. auto: " + str(self.auto))
-        # only turn off the light if it was turned on by the automation
+        # only turn off the output if it was turned on by the automation
         if self.auto and self.get_state(self.outputEntityName) == "on":
             # Check any extra conditions
             if self.evalConditions(self.extraOffConditions): 
                 self.pendingAuto = True
                 self.turn_off(self.outputEntityName)
+
+
+
+class BathroomFanAutoOff(BasicInactiveAutoOff):
+    def initialize(self):
+        self.autoOffDurationTheshold = timedelta(seconds=self.args.get("autoOffDurationTheshold", 5*60))
+        self.inputOnTime             = datetime.now()
+        self.onDuration              = timedelta(seconds=0)
+        super().initialize()
+
+
+    def input_changed(self, entity, attribute, old, new, kwargs):
+        now = datetime.now()
+        if new == "on":
+            self.inputOnTime = now
+        else:
+            self.onDuration = now - self.inputOnTime
+        super().input_changed(entity, attribute, old, new, kwargs)
+
+
+    def offDelay(self):
+        delay = super().offDelay() if self.onDuration > self.autoOffDurationTheshold else 0
+        self.log("onDuration " + str(self.onDuration.total_seconds()) + " delay " + str(delay))
+        return delay
+

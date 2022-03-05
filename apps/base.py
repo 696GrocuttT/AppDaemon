@@ -26,6 +26,8 @@ class BasicInactiveAutoOff(hass.Hass):
         self.auto                 = False
         self.pendingAuto          = False
         self.outputLastChanged    = datetime.now() - self.manualOffToAutoDelay
+        if eventName := self.args.get("inputEvent", None):
+            self.listen_event(self.inupt_event, eventName)
         self.listen_state(self.input_changed,  self.inputEntityName)
         self.listen_state(self.output_changed, self.outputEntityName)
 
@@ -55,6 +57,15 @@ class BasicInactiveAutoOff(hass.Hass):
     # Getter for off delay so we can easily override it in a subclass
     def offDelay(self):
         return self.autoOffTimeDelay
+
+
+    def inupt_event(self, event_name, data, kwargs):
+        self.log("Input event recieved")
+        # If the input entity isn't already on, trigger fake an on then off sequence
+        if self.get_state(self.inputEntityName) == "off":
+            self.log("Triggered from input event")
+            self.input_changed(None, None, "off", "on", None)
+            self.input_changed(None, None, "on", "off", None)
 
 
     def input_changed(self, entity, attribute, old, new, kwargs):

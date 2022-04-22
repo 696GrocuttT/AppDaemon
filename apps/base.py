@@ -31,6 +31,7 @@ class BasicInactiveAutoOff(hass.Hass):
         self.listen_state(self.input_changed,  self.inputEntityName)
         self.listen_state(self.output_changed, self.outputEntityName)
 
+
     # helper function for use in the extraOnConditions argument
     def isAfterTime(self, *, hour, minute=0):
         now = datetime.now()

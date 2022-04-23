@@ -9,6 +9,7 @@ class SystemMonitor(hass.Hass):
         self.log("Starting with arguments " + str(self.args))
         monEntities       = self.args["entities"]
         self.outputEntity = self.args['outputEntity']
+        self.alertEntity  = self.args.get("alertEntity", None)
         if not "log_level" in self.args:
             self.set_log_level("WARNING")
 
@@ -48,10 +49,16 @@ class SystemMonitor(hass.Hass):
 
     def update_warning_strings(self):
         messages = {}
+        alert    = False
         for (key, entityDict) in self.monDict.items():
             if entityDict["value"] == entityDict["triggerValue"]:
-                message = entityDict["message"].replace("%name%", entityDict["name"])
-                messages[message] = entityDict["priority"]
+                message           = entityDict["message"].replace("%name%", entityDict["name"])
+                priority          = entityDict["priority"]
+                messages[message] = priority
+                if priority > 5:
+                    alert = True
         messages    = sorted(messages.items(), key=lambda item: item[1], reverse=True)
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
         self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
+        if self.alertEntity:
+            self.set_state(self.alertEntity, state=("on" if alert else "off"))

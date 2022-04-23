@@ -54,4 +54,4 @@ class SystemMonitor(hass.Hass):
                 messages[message] = entityDict["priority"]
         messages    = sorted(messages.items(), key=lambda item: item[1], reverse=True)
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
-        self.set_textvalue(self.outputEntity, renderedTxt[0:255])
+        self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})

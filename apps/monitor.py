@@ -49,10 +49,9 @@ class SystemMonitor(hass.Hass):
     def update_warning_strings(self):
         messages = {}
         for (key, entityDict) in self.monDict.items():
-            if entityDict["value"] == entityDict["triggerValue"] or True:
+            if entityDict["value"] == entityDict["triggerValue"]:
                 message = entityDict["message"].replace("%name%", entityDict["name"])
                 messages[message] = entityDict["priority"]
         messages    = sorted(messages.items(), key=lambda item: item[1], reverse=True)
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
         self.set_textvalue(self.outputEntity, renderedTxt[0:255])
-        self.log(messages)

@@ -15,7 +15,8 @@ class SystemMonitor(hass.Hass):
 
         # Go through the list of entity types to listen for, setting up the listeners and 
         # the data structures to go with them
-        self.monDict = {}
+        self.alertLevel = 0
+        self.monDict    = {}
         for monEntity in monEntities:
             attribCond       = monEntity.get('attributeCond', {})
             nameRegex        = re.compile(monEntity['nameRegex'])
@@ -48,17 +49,21 @@ class SystemMonitor(hass.Hass):
 
 
     def update_warning_strings(self):
-        messages = {}
-        alert    = False
+        messages      = {}
+        curAlertLevel = 0
         for (key, entityDict) in self.monDict.items():
             if entityDict["value"] == entityDict["triggerValue"]:
                 message           = entityDict["message"].replace("%name%", entityDict["name"])
                 priority          = entityDict["priority"]
                 messages[message] = priority
-                if priority > 5:
-                    alert = True
+                if priority > curAlertLevel:
+                    curAlertLevel = priority
         messages    = sorted(messages.items(), key=lambda item: item[1], reverse=True)
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
         self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
         if self.alertEntity:
-            self.set_state(self.alertEntity, state=("on" if alert else "off"))
+            alert = curAlertLevel > 5
+            if (curAlertLevel > self.alertLevel) or not alert:
+                self.set_state(self.alertEntity, state=("on" if alert else "off"))
+        # update the alert level for next time
+        self.alertLevel = curAlertLevel

@@ -41,13 +41,15 @@ class WeatherMonitor(hass.Hass):
         self.updateOutputStr(title)
 
     
-    def itemStr(self, values, key, forceUnits=None, scale=None):
+    def itemStr(self, values, key, forceUnits=None, scale=1):
         data  = values[key]
         value = data['value']
+        try:
+            value = str(int((float(value) * scale) + 0.5))
+        except ValueError:
+            pass
         if value.islower():
             value = value.title()
-        if scale != None:
-            value = str(int((int(value) * scale) + 0.5))
         units = forceUnits if forceUnits != None else data['units']
         space = ''
         if units:
@@ -69,8 +71,8 @@ class WeatherMonitor(hass.Hass):
                       "/"      + self.itemStr(values, 'wind_gust',  scale = 0.868976, forceUnits='kts'))
         outputStr = title + "\\0" + "\\n".join(output)
         outputStr = outputStr.replace('\xb0C', ' C')
+        self.log(outputStr)
         self.locationsDict[title]['outputStr'] = outputStr
         locationsStrs = '\\0'.join(map(lambda x: x[1]['outputStr'], self.locationsDict.items()))
         self.set_state(self.outputEntity, state=locationsStrs[0:255], attributes={"fullText": locationsStrs})
-
 

@@ -16,9 +16,10 @@ class SystemMonitor(hass.Hass):
         # Go through the list of entity types to listen for, setting up the listeners and 
         # the data structures to go with them
         self.alertLevel = 0
-        self.monDict    = {}
+        self.monList    = []
         for monEntity in monEntities:
             attribCond       = monEntity.get('attributeCond', {})
+            attribName       = monEntity.get('attributeName', None)
             nameRegex        = re.compile(monEntity['nameRegex'])
             entityRegex      = re.compile(monEntity['entityRegex'])
             matchingEntities = filter(entityRegex.match, self.get_state())
@@ -35,24 +36,30 @@ class SystemMonitor(hass.Hass):
                     nameMatch   = nameRegex.search(frendlyName)
                     if nameMatch:
                         frendlyName = nameMatch.group(1)
-                    self.monDict[entity] = {"value": self.get_state(entity),
-                                            "name":  frendlyName}
+                    self.log(entity + " " + str(self.get_state(entity, attribute=attribName))) 
+                    monDict = {"value":         self.get_state(entity, attribute=attribName),
+                               "name":          frendlyName,
+                               "invertTrigger": monEntity.get('invertTrigger', False)}
                     for cfgItem in ["triggerValue", "message", "priority"]:
-                        self.monDict[entity][cfgItem] = monEntity[cfgItem]
-                    self.listen_state(self.state_changed, entity)
+                        monDict[cfgItem] = monEntity[cfgItem]
+                    self.monList.append(monDict)
+                    self.listen_state(self.state_changed, entity, attribute=attribName, kwargs=len(self.monList)-1)
         self.update_warning_strings()
-        
+
 
     def state_changed(self, entity, attribute, old, new, kwargs):
-        self.monDict[entity]["value"] = new
+        index                        = kwargs['kwargs']
+        self.monList[index]["value"] = new
         self.update_warning_strings()
 
 
     def update_warning_strings(self):
         messages      = {}
         curAlertLevel = 0
-        for (key, entityDict) in self.monDict.items():
-            if entityDict["value"] == entityDict["triggerValue"]:
+        for entityDict in self.monList:
+            self.log("meow  " + entityDict["message"]+  " " + str(entityDict["value"]) + " " + str(entityDict["triggerValue"]))
+            valueMatch = entityDict["value"] == entityDict["triggerValue"]
+            if valueMatch != entityDict["invertTrigger"]:
                 message           = entityDict["message"].replace("%name%", entityDict["name"])
                 priority          = entityDict["priority"]
                 messages[message] = priority

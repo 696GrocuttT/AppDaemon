@@ -36,16 +36,31 @@ class SystemMonitor(hass.Hass):
                     nameMatch   = nameRegex.search(frendlyName)
                     if nameMatch:
                         frendlyName = nameMatch.group(1)
-                    self.log(entity + " " + str(self.get_state(entity, attribute=attribName))) 
+                    invertTrigger = monEntity.get('invertTrigger', False)
                     monDict = {"value":         self.get_state(entity, attribute=attribName),
                                "name":          frendlyName,
-                               "invertTrigger": monEntity.get('invertTrigger', False)}
+                               "invertTrigger": invertTrigger}
                     for cfgItem in ["triggerValue", "message", "priority"]:
                         monDict[cfgItem] = monEntity[cfgItem]
                     self.monList.append(monDict)
-                    self.listen_state(self.state_changed, entity, attribute=attribName, kwargs=len(self.monList)-1)
+                    # check if this is a simple state trigger, or a duration trigger
+                    duration = monEntity.get('duration', None)
+                    if duration:
+                        value = monEntity["triggerValue"]
+                        if invertTrigger:
+                            self.listen_state(self.state_changed, entity, attribute=attribName, 
+                                              duration=duration, old=value, kwargs=len(self.monList)-1)
+                            self.listen_state(self.state_changed, entity, attribute=attribName, 
+                                              new=value, kwargs=len(self.monList)-1)
+                        else:
+                            self.listen_state(self.state_changed, entity, attribute=attribName, 
+                                              duration=duration, new=value, kwargs=len(self.monList)-1)
+                            self.listen_state(self.state_changed, entity, attribute=attribName, 
+                                              old=value, kwargs=len(self.monList)-1)
+                    else:
+                        self.listen_state(self.state_changed, entity, attribute=attribName, kwargs=len(self.monList)-1)
         self.update_warning_strings()
-
+    
 
     def state_changed(self, entity, attribute, old, new, kwargs):
         index                        = kwargs['kwargs']
@@ -57,7 +72,6 @@ class SystemMonitor(hass.Hass):
         messages      = {}
         curAlertLevel = 0
         for entityDict in self.monList:
-            self.log("meow  " + entityDict["message"]+  " " + str(entityDict["value"]) + " " + str(entityDict["triggerValue"]))
             valueMatch = entityDict["value"] == entityDict["triggerValue"]
             if valueMatch != entityDict["invertTrigger"]:
                 message           = entityDict["message"].replace("%name%", entityDict["name"])

@@ -20,7 +20,7 @@ class SystemMonitor(hass.Hass):
         for monEntity in monEntities:
             attribCond       = monEntity.get('attributeCond', {})
             attribName       = monEntity.get('attributeName', None)
-            nameRegex        = re.compile(monEntity['nameRegex'])
+            nameRegex        = re.compile(monEntity.get('nameRegex', '(.*)'))
             entityRegex      = re.compile(monEntity['entityRegex'])
             matchingEntities = filter(entityRegex.match, self.get_state())
             for entity in matchingEntities:

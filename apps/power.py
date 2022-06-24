@@ -95,7 +95,7 @@ class PowerControl(hass.Hass):
         self.log("Updating tariff rates")
         rateData = list(map(lambda x: (datetime.fromisoformat(x['from']),
                                        datetime.fromisoformat(x['to']), 
-                                       x['rate']), 
+                                       x['rate']/100), 
                             rawRateData))
         rateData.sort(key=lambda x: x[0])
         self.rateData = rateData        
@@ -167,7 +167,7 @@ class PowerControl(hass.Hass):
 
 
     def printSeries(self, series, title):    
-        strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.2}".format(*x), series)
+        strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.2f}".format(*x), series)
         self.log(title + ":\n" + "\n".join(strings))
 
 
@@ -175,6 +175,7 @@ class PowerControl(hass.Hass):
         self.log("Updating schedule")
         self.printSeries(self.forecastUsage, "Usage")
         self.printSeries(self.solarData, "Solar")
+        self.printSeries(self.rateData, "Rates")
         for data in self.rateData:
             power = self.powerForPeriod(self.solarData, data[0] , data[1])
             #self.log(str(power) + " " + str(data[0]) + "   " +str(data[1]))

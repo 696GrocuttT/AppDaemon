@@ -12,41 +12,83 @@ class PowerControl(hass.Hass):
         self.houseLoadEntityName = self.args['houseLoadEntity']
         self.usageDaysHistory    = self.args['usage_days_history']
         self.usageMargin         = float(self.args['houseLoadMargin'])
-
-        self.solarData     = []
-        self.rateData      = []
-        self.forecastUsage = []
-        self.rawSolarData  = []
+        self.maxChargeRate       = float(self.args['batteryChargeRateLimit'])
+        self.gasEfficiency       = float(self.args['gasHotWaterEfficiency'])
+        self.eddiTargetPower     = float(self.args['eddiTargetPower'])
+        self.eddiPowerLimit      = float(self.args['eddiPowerLimit'])
+        
+        self.solarData       = []
+        self.rateData        = []
+        self.usageData       = []
+        self.rawSolarData    = []
+        self.chargingPlan    = []
+        self.eddiPlan        = []
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
         self.rawSolarData.append(self.get_state(solarTodayEntityName,    attribute='forecast'))
         self.rawSolarData.append(self.get_state(solarTomorrowEntityName, attribute='forecast'))
-        self.listen_state(self.forecast_changed, solarTodayEntityName,    attribute='forecast', kwargs=0) 
-        self.listen_state(self.forecast_changed, solarTomorrowEntityName, attribute='forecast', kwargs=1)
-        self.parseForecast()
+        self.listen_state(self.solarChanged, solarTodayEntityName,    attribute='forecast', kwargs=0) 
+        self.listen_state(self.solarChanged, solarTomorrowEntityName, attribute='forecast', kwargs=1)
+        self.parseSolar()
         # Setup getting the export rates
         exportRateEntityName = self.args['exportRateEntity']
         rawRateData          = self.get_state(exportRateEntityName, attribute='rates')
-        self.listen_state(self.rates_changed, exportRateEntityName, attribute='rates') 
+        self.listen_state(self.ratesChanged, exportRateEntityName, attribute='rates') 
         self.parseRates(rawRateData)
+        # Setup getting batter stats        
+        batteryCapacityEntityName = self.args['batteryCapacity']
+        batteryEnergyEntityName   = self.args['batteryEnergy']
+        self.batteryCapacity      = float(self.get_state(batteryCapacityEntityName)) / 1000
+        self.batteryEnergy        = float(self.get_state(batteryEnergyEntityName))   / 1000
+        self.listen_state(self.batteryCapacityChanged, batteryCapacityEntityName) 
+        self.listen_state(self.batteryEnergyChanged, batteryEnergyEntityName)
+        # Setup getting gas rate
+        gasRateEntityName = self.args['gasRateEntity']
+        self.gasRate      = float(self.get_state(gasRateEntityName))
+        self.listen_state(self.gasRateChanged, gasRateEntityName) 
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
+
+
+    def gasRateChanged(self, entity, attribute, old, new, kwargs):
+        new = float(new)
+        self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(self.gasRate, new))
+        self.gasRate = new
+        self.mergeAndProcessData()    
+                    
+        
+    def batteryCapacityChanged(self, entity, attribute, old, new, kwargs):
+        new = float(new) / 1000
+        # only recalculate everything if there's been a significant change in value
+        if abs(self.batteryCapacity - new) > 0.1:
+            self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.batteryCapacity, new))
+            self.batteryCapacity = new
+            self.mergeAndProcessData()        
+
+
+    def batteryEnergyChanged(self, entity, attribute, old, new, kwargs):
+        new = float(new) / 1000
+        # only recalculate everything if there's been a significant change in value
+        if abs(self.batteryEnergy - new) > 0.1:
+            self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.batteryEnergy, new))
+            self.batteryEnergy = new
+            self.mergeAndProcessData()
         
         
-    def forecast_changed(self, entity, attribute, old, new, kwargs):
-        index               = kwargs['kwargs']
-        rawSolarData[index] = new
-        self.parseForecast()
+    def solarChanged(self, entity, attribute, old, new, kwargs):
+        index                    = kwargs['kwargs']
+        self.rawSolarData[index] = new
+        self.parseSolar()
         self.mergeAndProcessData()
 
     
-    def rates_changed(self, entity, attribute, old, new, kwargs):
+    def ratesChanged(self, entity, attribute, old, new, kwargs):
         self.parseRates(new)
         self.mergeAndProcessData()
 
     
-    def parseForecast(self):
+    def parseSolar(self):
         self.log("Updating solar forecast")
         # flatten the forecasts arrays for the different days
         flatForecast = [x for xs in self.rawSolarData for x in xs]        
@@ -66,7 +108,7 @@ class PowerControl(hass.Hass):
 
 
     def powerForPeriod(self, data, startTime, endTime):
-        power = 0
+        power = 0.0
         for forecastPeriod in data:
             forecastStartTime = forecastPeriod[0]
             forecastEndTime   = forecastPeriod[1]
@@ -88,15 +130,19 @@ class PowerControl(hass.Hass):
             elif startTime >= forecastStartTime and startTime <= forecastEndTime:
                 power = power + ( forecastPower * ((forecastEndTime - startTime) / 
                                                    (forecastEndTime - forecastStartTime)) )
+            
         return power
         
 
     def parseRates(self, rawRateData):
         self.log("Updating tariff rates")
-        rateData = list(map(lambda x: (datetime.fromisoformat(x['from']),
-                                       datetime.fromisoformat(x['to']), 
+        rateData = list(map(lambda x: (datetime.fromisoformat(x['from']).astimezone(),
+                                       datetime.fromisoformat(x['to']).astimezone(), 
                                        x['rate']/100), 
                             rawRateData))
+        # Remove rates that are in the past
+        now      = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        rateData = list(filter(lambda x: x[1] >= now, rateData))                            
         rateData.sort(key=lambda x: x[0])
         self.rateData = rateData        
 
@@ -161,22 +207,69 @@ class PowerControl(hass.Hass):
                                                 x[2]), 
                                  forecastUsage))
         forecastUsage.extend(tomorrowsForecast)
-        self.forecastUsage = forecastUsage
+        self.usageData = forecastUsage
         # process the update
         self.mergeAndProcessData()
 
 
     def printSeries(self, series, title):    
-        strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.2f}".format(*x), series)
+        strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
         self.log(title + ":\n" + "\n".join(strings))
 
 
     def mergeAndProcessData(self):
         self.log("Updating schedule")
-        self.printSeries(self.forecastUsage, "Usage")
-        self.printSeries(self.solarData, "Solar")
-        self.printSeries(self.rateData, "Rates")
-        for data in self.rateData:
-            power = self.powerForPeriod(self.solarData, data[0] , data[1])
-            #self.log(str(power) + " " + str(data[0]) + "   " +str(data[1]))
-
+        # Calculate the solar surplus after house load, we base this on the usage time 
+        # series dates as that's typically a finer granularity than the solar forecast.
+        solarSurplus = map(lambda usage: (usage[0], 
+                                          usage[1], 
+                                          max(0, self.powerForPeriod(self.solarData, usage[0] , usage[1]) - usage[2])),
+                           self.usageData)        
+        solarSurplus = list(filter(lambda x: x[2] > 0, solarSurplus))
+        
+        # Sort the rate time slots by price, and then work out which ones we should 
+        # use to change the battery.
+        chargingPlan    = []
+        ratesCheapFirst = sorted(self.rateData, key=lambda x: x[2])
+        chargeRequired  = self.batteryCapacity - self.batteryEnergy
+        for rate in ratesCheapFirst:
+            maxCharge = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
+            power     = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+            if power > 0:
+                chargeTaken    = min(power, maxCharge)
+                chargeRequired = chargeRequired - chargeTaken
+                chargingPlan.append((rate[0], rate[1], chargeTaken))
+                if chargeRequired < 0:
+                    break
+        chargingPlan.sort(key=lambda x: x[0])
+            
+        # calculate the surplus after battery charging    
+        postBatteryChargeSurplus = map(lambda surplus: (surplus[0], 
+                                                        surplus[1], 
+                                                        surplus[2] - self.powerForPeriod(chargingPlan, surplus[0], surplus[1])),
+                                       solarSurplus)  
+        postBatteryChargeSurplus = list(filter(lambda x: x[2] > 0, postBatteryChargeSurplus))              
+        
+        # Calculate the target rate for the eddi
+        eddiPlan          = []
+        eddiTargetRate    = self.gasRate / self.gasEfficiency
+        eddiPowerRequired = self.eddiTargetPower
+        for rate in ratesCheapFirst:
+            if rate[2] > eddiTargetRate:
+                break
+            maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
+            power    = self.powerForPeriod(postBatteryChargeSurplus, rate[0], rate[1])
+            if power > 0:
+                powerTaken        = min(power, maxPower)
+                eddiPowerRequired = eddiPowerRequired - powerTaken
+                eddiPlan.append((rate[0], rate[1], powerTaken))
+                if eddiPowerRequired < 0:
+                    break     
+        eddiPlan.sort(key=lambda x: x[0])
+            
+        self.printSeries(chargingPlan, "Charging plan")
+        self.printSeries(eddiPlan,     "Eddi plan")
+        self.chargingPlan = chargingPlan
+        self.eddiPlan     = eddiPlan
+            
+            

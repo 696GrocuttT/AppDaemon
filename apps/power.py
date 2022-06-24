@@ -7,18 +7,24 @@ import re
 
 class PowerControl(hass.Hass):
     def initialize(self):
-        self.log("Starting with arguments " + str(self.args))
+        self.log("Starting with arguments " + str(self.args))        
+        self.solarForecastMargin = float(self.args['solarForecastMargin'])
         self.houseLoadEntityName = self.args['houseLoadEntity']
         self.usageDaysHistory    = self.args['usage_days_history']
+        self.usageMargin         = float(self.args['houseLoadMargin'])
 
         self.solarData     = []
         self.rateData      = []
         self.forecastUsage = []
+        self.rawSolarData  = []
         # Setup getting the solar forecast data
-        forecastEntityName = self.args['solarForecastTodayEntity']
-        rawForecastData    = self.get_state(forecastEntityName, attribute='forecast')
-        self.listen_state(self.forecast_changed, forecastEntityName, attribute='forecast') 
-        self.parseForecast(rawForecastData)
+        solarTodayEntityName    = self.args['solarForecastTodayEntity']
+        solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
+        self.rawSolarData.append(self.get_state(solarTodayEntityName,    attribute='forecast'))
+        self.rawSolarData.append(self.get_state(solarTomorrowEntityName, attribute='forecast'))
+        self.listen_state(self.forecast_changed, solarTodayEntityName,    attribute='forecast', kwargs=0) 
+        self.listen_state(self.forecast_changed, solarTomorrowEntityName, attribute='forecast', kwargs=1)
+        self.parseForecast()
         # Setup getting the export rates
         exportRateEntityName = self.args['exportRateEntity']
         rawRateData          = self.get_state(exportRateEntityName, attribute='rates')
@@ -29,7 +35,9 @@ class PowerControl(hass.Hass):
         
         
     def forecast_changed(self, entity, attribute, old, new, kwargs):
-        self.parseForecast(new)
+        index               = kwargs['kwargs']
+        rawSolarData[index] = new
+        self.parseForecast()
         self.mergeAndProcessData()
 
     
@@ -38,11 +46,13 @@ class PowerControl(hass.Hass):
         self.mergeAndProcessData()
 
     
-    def parseForecast(self, rawForecastData):
+    def parseForecast(self):
         self.log("Updating solar forecast")
-        powerData = list(map(lambda x: (datetime.fromisoformat(x['period_end']), 
-                                        x['pv_estimate']), 
-                             rawForecastData))
+        # flatten the forecasts arrays for the different days
+        flatForecast = [x for xs in self.rawSolarData for x in xs]        
+        powerData    = list(map(lambda x: (datetime.fromisoformat(x['period_end']), 
+                                           x['pv_estimate']), 
+                                flatForecast))
         powerData.sort(key=lambda x: x[0])
         timeRangePowerData = []
         startTime          = None
@@ -50,7 +60,7 @@ class PowerControl(hass.Hass):
         for data in powerData:
             curSampleEndTime = data[0]
             if startTime:
-                timeRangePowerData.append( (startTime, curSampleEndTime, data[1]) )
+                timeRangePowerData.append( (startTime, curSampleEndTime, data[1] * self.solarForecastMargin) )
             startTime = curSampleEndTime
         self.solarData = timeRangePowerData
 
@@ -139,7 +149,7 @@ class PowerControl(hass.Hass):
                 avgUsage  = avgUsage + self.powerForPeriod(timeRangeUsageData, 
                                                            forecastUsageStartTime - daysDelta, 
                                                            forecastUsageEndTime   - daysDelta)
-            avgUsage = avgUsage / self.usageDaysHistory
+            avgUsage = (avgUsage / self.usageDaysHistory) * self.usageMargin
             # finally add the data to the usage array
             forecastUsage.append((forecastUsageStartTime, forecastUsageEndTime, avgUsage)) 
             forecastUsageStartTime = forecastUsageEndTime
@@ -163,7 +173,8 @@ class PowerControl(hass.Hass):
 
     def mergeAndProcessData(self):
         self.log("Updating schedule")
-        self.printSeries(self.forecastUsage, "usage")
+        self.printSeries(self.forecastUsage, "Usage")
+        self.printSeries(self.solarData, "Solar")
         for data in self.rateData:
             power = self.powerForPeriod(self.solarData, data[0] , data[1])
             #self.log(str(power) + " " + str(data[0]) + "   " +str(data[1]))

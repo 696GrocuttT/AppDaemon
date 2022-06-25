@@ -13,6 +13,7 @@ class PowerControl(hass.Hass):
         self.usageDaysHistory    = self.args['usage_days_history']
         self.usageMargin         = float(self.args['houseLoadMargin'])
         self.maxChargeRate       = float(self.args['batteryChargeRateLimit'])
+        self.batReservePct       = float(self.args['batteryReservePercentage'])
         self.gasEfficiency       = float(self.args['gasHotWaterEfficiency'])
         self.eddiTargetPower     = float(self.args['eddiTargetPower'])
         self.eddiPowerLimit      = float(self.args['eddiPowerLimit'])
@@ -227,20 +228,25 @@ class PowerControl(hass.Hass):
     def mergeAndProcessData(self):
         self.log("Updating schedule")        
         # Calculate the solar surplus after house load, we base this on the usage time 
-        # series dates as that's typically a finer granularity than the solar forecast.
-        solarSurplus = map(lambda usage: (usage[0], 
-                                          usage[1], 
-                                          max(0, self.powerForPeriod(self.solarData, usage[0] , usage[1]) - usage[2])),
-                           self.usageData)        
-        solarSurplus = list(filter(lambda x: x[2] > 0, solarSurplus))
+        # series dates as that's typically a finer granularity than the solar forecast. Similarly 
+        # we work out the house usage after any forecast solar.
+        solarSurplus    = map(lambda usage: (usage[0], 
+                                             usage[1], 
+                                             max(0, self.powerForPeriod(self.solarData, usage[0] , usage[1]) - usage[2])),
+                              self.usageData)        
+        solarSurplus    = list(filter(lambda x: x[2] > 0, solarSurplus))        
+        usageAfterSolar = map(lambda usage: (usage[0], 
+                                             usage[1], 
+                                             max(0, usage[2] - self.powerForPeriod(self.solarData, usage[0] , usage[1]))),
+                              self.usageData)        
+        usageAfterSolar = list(filter(lambda x: x[2] > 0, usageAfterSolar))        
         
         # Remove rates that are in the past
         now             = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
         rateData        = list(filter(lambda x: x[1] >= now, self.rateData))                            
-        ratesCheapFirst = sorted(rateData, key=lambda x: x[2])
         
         # calculate the charge plan, and work out what's left afterwards
-        chargingPlan             = self.calculateChargePlan(ratesCheapFirst, solarSurplus)
+        chargingPlan             = self.calculateChargePlan(rateData, solarSurplus, usageAfterSolar)
         postBatteryChargeSurplus = map(lambda surplus: (surplus[0], 
                                                         surplus[1], 
                                                         surplus[2] - self.powerForPeriod(chargingPlan, surplus[0], surplus[1])),
@@ -248,7 +254,7 @@ class PowerControl(hass.Hass):
         postBatteryChargeSurplus = list(filter(lambda x: x[2] > 0, postBatteryChargeSurplus))              
         
         # Calculate the eddi plan based on any remaining surplus
-        eddiPlan = self.calculateEddiPlan(ratesCheapFirst, postBatteryChargeSurplus)
+        eddiPlan = self.calculateEddiPlan(rateData, postBatteryChargeSurplus)
             
         self.printSeries(chargingPlan, "Charging plan", mergeable=True)
         self.printSeries(eddiPlan,     "Eddi plan",     mergeable=True)
@@ -256,11 +262,12 @@ class PowerControl(hass.Hass):
         self.eddiPlan     = eddiPlan
             
             
-    def calculateEddiPlan(self, ratesCheapFirst, solarSurplus):
+    def calculateEddiPlan(self, rateData, solarSurplus):
         # Calculate the target rate for the eddi
         eddiPlan          = []
         eddiTargetRate    = self.gasRate / self.gasEfficiency
         eddiPowerRequired = self.eddiTargetPower
+        ratesCheapFirst   = sorted(rateData, key=lambda x: x[2])
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:
                 break
@@ -276,20 +283,67 @@ class PowerControl(hass.Hass):
         return eddiPlan
     
     
-    def calculateChargePlan(self, ratesCheapFirst, solarSurplus):
-        # Sort the rate time slots by price, and then work out which ones we should 
-        # use to change the battery.
-        chargingPlan    = []        
-        chargeRequired  = self.batteryCapacity - self.batteryEnergy
-        for rate in ratesCheapFirst:
-            maxCharge = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
-            power     = self.powerForPeriod(solarSurplus, rate[0], rate[1])
-            if power > 0:
-                chargeTaken    = min(power, maxCharge)
-                chargeRequired = chargeRequired - chargeTaken
-                chargingPlan.append((rate[0], rate[1], chargeTaken))
-                if chargeRequired < 0:
-                    break
+    def genBatLevelForecast(self, rateData, usageAfterSolar, chargingPlan):
+        fullChargeReached = False
+        batForecast       = []            
+        batteryRemaining  = self.batteryEnergy
+        # The rate data is just used as a basis for the timeline
+        for rate in rateData:
+            batteryRemaining = (batteryRemaining - 
+                                self.powerForPeriod(usageAfterSolar, rate[0], rate[1]) + 
+                                self.powerForPeriod(chargingPlan,    rate[0], rate[1]))
+            if batteryRemaining >= self.batteryCapacity:
+                fullChargeReached = True
+                batteryRemaining  = self.batteryCapacity
+            batForecast.append((rate[0], rate[1], batteryRemaining))
+        return (batForecast, fullChargeReached)
+    
+    
+    def calculateChargePlan(self, rateData, solarSurplus, usageAfterSolar):        
+        chargingPlan = []
+        # Walk through the time slots (using the rates as a base timeline) predicting the battery 
+        # capacity at the end of each time slot. If we get below the reserve level, add the cheapest 
+        # previous rate to the charge plan. This Section basically makes sure we don't flatten the 
+        # battery. It doesn't make sure we charge the battery, that comes later.
+        batReserveEnergy     = self.batteryCapacity * (self.batReservePct / 100)
+        batteryRemaining     = self.batteryEnergy
+        availableChargeRates = []
+        for rate in rateData:
+            # Update list of available rates
+            availableChargeRates.append(rate)
+            availableChargeRates = sorted(availableChargeRates, key=lambda x: x[2])
+            # Have we got enough energy for this time slot
+            batteryRemaining = batteryRemaining - self.powerForPeriod(usageAfterSolar, rate[0], rate[1])
+            if batteryRemaining <= batReserveEnergy:                
+                # We need to add a charging slot, NOTE: we create a list from the existing 
+                # availableChargeRates list so we can do concurent modification
+                for (index, chargeRate) in enumerate(list(availableChargeRates)):
+                    maxCharge = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
+                    power     = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
+                    if power > 0:
+                        chargeTaken      = min(power, maxCharge)
+                        batteryRemaining = batteryRemaining + chargeTaken
+                        # we can only use a charging slot once, so remove it from the available list
+                        del availableChargeRates[index]
+                        chargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
+                        if batteryRemaining > batReserveEnergy:
+                            break    
+    
+        # Now we have a minimum charging plan that'll mean we don't run out, top up the battery with 
+        # the cheapest slots we've got left
+        while availableChargeRates:
+            (batProfile, fullyCharged) = self.genBatLevelForecast(rateData, usageAfterSolar, chargingPlan)            
+            if fullyCharged:
+                break
+            else:                
+                chargeRate = availableChargeRates[0]                
+                maxCharge  = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
+                power      = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
+                if power > 0:
+                    chargingPlan.append((chargeRate[0], chargeRate[1], min(power, maxCharge)))
+                # we can only use a charging slot once, so remove it from the available list            
+                del availableChargeRates[0]
+                    
         chargingPlan.sort(key=lambda x: x[0])
         return chargingPlan
     

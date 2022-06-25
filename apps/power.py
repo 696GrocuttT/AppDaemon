@@ -140,10 +140,7 @@ class PowerControl(hass.Hass):
                                        datetime.fromisoformat(x['to']).astimezone(), 
                                        x['rate']/100), 
                             rawRateData))
-        # Remove rates that are in the past
-        now      = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-        rateData = list(filter(lambda x: x[1] >= now, rateData))                            
-        rateData.sort(key=lambda x: x[0])
+        rateData.sort(key=lambda x: x[0])        
         self.rateData = rateData        
 
 
@@ -212,13 +209,23 @@ class PowerControl(hass.Hass):
         self.mergeAndProcessData()
 
 
-    def printSeries(self, series, title):    
+    def printSeries(self, series, title, mergeable=False):
+        if mergeable:
+            mergedSeries = []
+            for item in series:
+                # If we already have an item in the merged list, and the last item of that list 
+                # has an end time that matches the start time of the new item. Merge them.
+                if mergedSeries and mergedSeries[-1][1] == item[0]:
+                    mergedSeries[-1] = (mergedSeries[-1][0], item[1], mergedSeries[-1][2] + item[2])
+                else:
+                    mergedSeries.append(item)
+            series = mergedSeries    
         strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
         self.log(title + ":\n" + "\n".join(strings))
 
 
     def mergeAndProcessData(self):
-        self.log("Updating schedule")
+        self.log("Updating schedule")        
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast.
         solarSurplus = map(lambda usage: (usage[0], 
@@ -227,10 +234,14 @@ class PowerControl(hass.Hass):
                            self.usageData)        
         solarSurplus = list(filter(lambda x: x[2] > 0, solarSurplus))
         
+        # Remove rates that are in the past
+        now      = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        rateData = list(filter(lambda x: x[1] >= now, self.rateData))                            
+        
         # Sort the rate time slots by price, and then work out which ones we should 
         # use to change the battery.
         chargingPlan    = []
-        ratesCheapFirst = sorted(self.rateData, key=lambda x: x[2])
+        ratesCheapFirst = sorted(rateData, key=lambda x: x[2])
         chargeRequired  = self.batteryCapacity - self.batteryEnergy
         for rate in ratesCheapFirst:
             maxCharge = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
@@ -267,8 +278,8 @@ class PowerControl(hass.Hass):
                     break     
         eddiPlan.sort(key=lambda x: x[0])
             
-        self.printSeries(chargingPlan, "Charging plan")
-        self.printSeries(eddiPlan,     "Eddi plan")
+        self.printSeries(chargingPlan, "Charging plan", mergeable=True)
+        self.printSeries(eddiPlan,     "Eddi plan",     mergeable=True)
         self.chargingPlan = chargingPlan
         self.eddiPlan     = eddiPlan
             

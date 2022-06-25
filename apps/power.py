@@ -235,13 +235,51 @@ class PowerControl(hass.Hass):
         solarSurplus = list(filter(lambda x: x[2] > 0, solarSurplus))
         
         # Remove rates that are in the past
-        now      = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-        rateData = list(filter(lambda x: x[1] >= now, self.rateData))                            
+        now             = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        rateData        = list(filter(lambda x: x[1] >= now, self.rateData))                            
+        ratesCheapFirst = sorted(rateData, key=lambda x: x[2])
         
+        # calculate the charge plan, and work out what's left afterwards
+        chargingPlan             = self.calculateChargePlan(ratesCheapFirst, solarSurplus)
+        postBatteryChargeSurplus = map(lambda surplus: (surplus[0], 
+                                                        surplus[1], 
+                                                        surplus[2] - self.powerForPeriod(chargingPlan, surplus[0], surplus[1])),
+                                       solarSurplus)  
+        postBatteryChargeSurplus = list(filter(lambda x: x[2] > 0, postBatteryChargeSurplus))              
+        
+        # Calculate the eddi plan based on any remaining surplus
+        eddiPlan = self.calculateEddiPlan(ratesCheapFirst, postBatteryChargeSurplus)
+            
+        self.printSeries(chargingPlan, "Charging plan", mergeable=True)
+        self.printSeries(eddiPlan,     "Eddi plan",     mergeable=True)
+        self.chargingPlan = chargingPlan
+        self.eddiPlan     = eddiPlan
+            
+            
+    def calculateEddiPlan(self, ratesCheapFirst, solarSurplus):
+        # Calculate the target rate for the eddi
+        eddiPlan          = []
+        eddiTargetRate    = self.gasRate / self.gasEfficiency
+        eddiPowerRequired = self.eddiTargetPower
+        for rate in ratesCheapFirst:
+            if rate[2] > eddiTargetRate:
+                break
+            maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
+            power    = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+            if power > 0:
+                powerTaken        = min(power, maxPower)
+                eddiPowerRequired = eddiPowerRequired - powerTaken
+                eddiPlan.append((rate[0], rate[1], powerTaken))
+                if eddiPowerRequired < 0:
+                    break     
+        eddiPlan.sort(key=lambda x: x[0])
+        return eddiPlan
+    
+    
+    def calculateChargePlan(self, ratesCheapFirst, solarSurplus):
         # Sort the rate time slots by price, and then work out which ones we should 
         # use to change the battery.
-        chargingPlan    = []
-        ratesCheapFirst = sorted(rateData, key=lambda x: x[2])
+        chargingPlan    = []        
         chargeRequired  = self.batteryCapacity - self.batteryEnergy
         for rate in ratesCheapFirst:
             maxCharge = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
@@ -253,34 +291,6 @@ class PowerControl(hass.Hass):
                 if chargeRequired < 0:
                     break
         chargingPlan.sort(key=lambda x: x[0])
-            
-        # calculate the surplus after battery charging    
-        postBatteryChargeSurplus = map(lambda surplus: (surplus[0], 
-                                                        surplus[1], 
-                                                        surplus[2] - self.powerForPeriod(chargingPlan, surplus[0], surplus[1])),
-                                       solarSurplus)  
-        postBatteryChargeSurplus = list(filter(lambda x: x[2] > 0, postBatteryChargeSurplus))              
-        
-        # Calculate the target rate for the eddi
-        eddiPlan          = []
-        eddiTargetRate    = self.gasRate / self.gasEfficiency
-        eddiPowerRequired = self.eddiTargetPower
-        for rate in ratesCheapFirst:
-            if rate[2] > eddiTargetRate:
-                break
-            maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
-            power    = self.powerForPeriod(postBatteryChargeSurplus, rate[0], rate[1])
-            if power > 0:
-                powerTaken        = min(power, maxPower)
-                eddiPowerRequired = eddiPowerRequired - powerTaken
-                eddiPlan.append((rate[0], rate[1], powerTaken))
-                if eddiPowerRequired < 0:
-                    break     
-        eddiPlan.sort(key=lambda x: x[0])
-            
-        self.printSeries(chargingPlan, "Charging plan", mergeable=True)
-        self.printSeries(eddiPlan,     "Eddi plan",     mergeable=True)
-        self.chargingPlan = chargingPlan
-        self.eddiPlan     = eddiPlan
-            
-            
+        return chargingPlan
+    
+    

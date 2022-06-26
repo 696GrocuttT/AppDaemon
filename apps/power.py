@@ -8,22 +8,26 @@ import re
 class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
-        self.solarForecastMargin = float(self.args['solarForecastMargin'])
-        self.houseLoadEntityName = self.args['houseLoadEntity']
-        self.usageDaysHistory    = self.args['usage_days_history']
-        self.usageMargin         = float(self.args['houseLoadMargin'])
-        self.maxChargeRate       = float(self.args['batteryChargeRateLimit'])
-        self.batReservePct       = float(self.args['batteryReservePercentage'])
-        self.gasEfficiency       = float(self.args['gasHotWaterEfficiency'])
-        self.eddiTargetPower     = float(self.args['eddiTargetPower'])
-        self.eddiPowerLimit      = float(self.args['eddiPowerLimit'])
+        self.solarForecastMargin              = float(self.args['solarForecastMargin'])
+        self.houseLoadEntityName              = self.args['houseLoadEntity']
+        self.usageDaysHistory                 = self.args['usageIaysHistory']
+        self.eddiOutputEntityName             = self.args['eddiOutputEntity']
+        self.batteryDischargeOutputEntityName = self.args['batteryDischargeOutputEntity']
+        self.usageMargin                      = float(self.args['houseLoadMargin'])
+        self.maxChargeRate                    = float(self.args['batteryChargeRateLimit'])
+        self.batReservePct                    = float(self.args['batteryReservePercentage'])
+        self.gasEfficiency                    = float(self.args['gasHotWaterEfficiency'])
+        self.eddiTargetPower                  = float(self.args['eddiTargetPower'])
+        self.eddiPowerLimit                   = float(self.args['eddiPowerLimit'])
         
         self.solarData       = []
         self.rateData        = []
         self.usageData       = []
         self.rawSolarData    = []
         self.chargingPlan    = []
+        self.dischargePlan   = []
         self.eddiPlan        = []
+        self.planUpdateTime  = None
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -50,6 +54,32 @@ class PowerControl(hass.Hass):
         self.listen_state(self.gasRateChanged, gasRateEntityName) 
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
+        # Schedule an the output update of the 30 mintues, on the half hour boundary
+        now       = datetime.now() 
+        startTime = now.replace(minute=0, second=0, microsecond=0) 
+        while startTime < now:
+            startTime = startTime + timedelta(minutes=30)
+        self.run_every(self.updateOutputs, startTime, 30*60)
+        
+
+    def updateOutputs(self, kwargs):
+        self.log("Updating outputs")
+        # The the time 15 minutes in the future (ie the middle of a time slot) to find
+        # a slot that starts now. This avoids any issues with this event firing a little 
+        # early / late.
+        now           = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        slotMidTime   = now + timedelta(minutes=15)
+        dischargeInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan), None)
+        dischargeInfo = "on" if dischargeInfo else "off"
+        eddiInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan),      None)
+        eddiInfo      = "on" if eddiInfo else "off"
+        self.set_state(self.batteryDischargeOutputEntityName, state=dischargeInfo, attributes={"planUpdateTime":  self.planUpdateTime,
+                                                                                               "stateUpdateTime": now,
+                                                                                               "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
+                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True)})
+        self.set_state(self.eddiOutputEntityName,             state=eddiInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
+                                                                                               "stateUpdateTime": now,
+                                                                                               "plan":            self.seriesToString(self.eddiPlan, mergeable=True)})
 
 
     def gasRateChanged(self, entity, attribute, old, new, kwargs):
@@ -208,7 +238,7 @@ class PowerControl(hass.Hass):
         self.mergeAndProcessData()
 
 
-    def printSeries(self, series, title, mergeable=False):
+    def seriesToString(self, series, mergeable=False):
         if mergeable:
             mergedSeries = []
             for item in series:
@@ -219,8 +249,11 @@ class PowerControl(hass.Hass):
                 else:
                     mergedSeries.append(item)
             series = mergedSeries    
-        strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
-        self.log(title + ":\n" + "\n".join(strings))
+        return "\n".join(map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series))
+
+
+    def printSeries(self, series, title, mergeable=False):
+        self.log(title + ":\n" + self.seriesToString(series, mergeable))
 
 
     def opOnSeries(self, a, b, operation):
@@ -264,9 +297,16 @@ class PowerControl(hass.Hass):
         self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
         self.printSeries(dischargePlan, "Discharging plan", mergeable=True)
         self.printSeries(eddiPlan,      "Eddi plan",        mergeable=True)
-        self.chargingPlan = chargingPlan
-        self.eddiPlan     = eddiPlan
-            
+        self.chargingPlan   = chargingPlan
+        self.dischargePlan  = dischargePlan
+        self.eddiPlan       = eddiPlan
+        
+        # If there's not been an output update so far, force it now
+        forceUpdate         = not bool(self.planUpdateTime)
+        self.planUpdateTime = now
+        if forceUpdate: 
+            self.updateOutputs(None)
+
             
     def calculateEddiPlan(self, rateData, solarSurplus):
         # Calculate the target rate for the eddi

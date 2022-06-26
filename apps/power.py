@@ -240,9 +240,19 @@ class PowerControl(hass.Hass):
         solarUsage      = self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a)
         usageAfterSolar = self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b))
         
-        # Remove rates that are in the past
-        now             = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-        rateData        = list(filter(lambda x: x[1] >= now, self.rateData))                            
+        # Remove rates that are in the past, and make sure we have at least 24 hours of rates. since 
+        # we only get toworrows rates at 4pm, so clone todays rates into tomorrow as a rough guess
+        # if we don't have tomorrows rates yet
+        now        = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        oneDay     = timedelta(days=1)
+        targetTime = now + oneDay
+        rateData   = list(self.rateData)
+        for rateToClone in rateData:
+            if rateData[-1][1] < targetTime:
+                rateData.append((rateToClone[0]+oneDay, rateToClone[1]+oneDay, rateToClone[2]))
+            else:
+                break
+        rateData = list(filter(lambda x: x[1] >= now, rateData))
         
         # calculate the charge plan, and work out what's left afterwards
         (chargingPlan, dischargePlan) = self.calculateChargePlan(rateData, solarUsage, solarSurplus, usageAfterSolar)
@@ -296,8 +306,6 @@ class PowerControl(hass.Hass):
         # miday on the last day of the forecast
         lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
         fullChargeAfterMidday = any(x[0] >= lastMidday and x[3] for x in batForecast)
-        
-        self.printSeries(batForecast,  "bat profile plan"   )
         return (batForecast, fullChargeAfterMidday)
     
     

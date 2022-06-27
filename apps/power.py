@@ -420,7 +420,7 @@ class PowerControl(hass.Hass):
                 # If we're still fully charged after swapping a slot to discharging, then make that the plan 
                 # of record by updating the arrays
                 if fullyCharged:
-                    dischargePlan.append(mostExpenciveRate)
+                    dischargePlan.append(adjustBy[0])
                     solarSurplus         = newSolarSurplus         
                     usageAfterSolar      = newUsageAfterSolar     
                     availableChargeRates = newAvailableChargeRates

@@ -135,6 +135,7 @@ class PowerControl(hass.Hass):
             if startTime:
                 timeRangePowerData.append( (startTime, curSampleEndTime, data[1] * self.solarForecastMargin) )
             startTime = curSampleEndTime
+        self.printSeries(timeRangePowerData, "Solar forecast")
         self.solarData = timeRangePowerData
 
 
@@ -169,7 +170,8 @@ class PowerControl(hass.Hass):
                                        datetime.fromisoformat(x['to']).astimezone(), 
                                        x['rate']/100), 
                             rawRateData))
-        rateData.sort(key=lambda x: x[0])        
+        rateData.sort(key=lambda x: x[0])    
+        self.printSeries(rateData, "Rate data")
         self.rateData = rateData        
 
 
@@ -233,6 +235,7 @@ class PowerControl(hass.Hass):
                                                 x[2]), 
                                  forecastUsage))
         forecastUsage.extend(tomorrowsForecast)
+        self.printSeries(forecastUsage, "Usage forecast")
         self.usageData = forecastUsage
         # process the update
         self.mergeAndProcessData()
@@ -249,7 +252,11 @@ class PowerControl(hass.Hass):
                 else:
                     mergedSeries.append(item)
             series = mergedSeries    
-        return "\n".join(map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series))
+        if series and len(series[0]) > 3:
+            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3}".format(*x), series)
+        else:
+            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
+        return "\n".join(strings)
 
 
     def printSeries(self, series, title, mergeable=False):
@@ -273,19 +280,9 @@ class PowerControl(hass.Hass):
         solarUsage      = self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a)
         usageAfterSolar = self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b))
         
-        # Remove rates that are in the past, and make sure we have at least 24 hours of rates. since 
-        # we only get toworrows rates at 4pm, so clone todays rates into tomorrow as a rough guess
-        # if we don't have tomorrows rates yet
-        now        = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-        oneDay     = timedelta(days=1)
-        targetTime = now + oneDay
-        rateData   = list(self.rateData)
-        for rateToClone in rateData:
-            if rateData[-1][1] < targetTime:
-                rateData.append((rateToClone[0]+oneDay, rateToClone[1]+oneDay, rateToClone[2]))
-            else:
-                break
-        rateData = list(filter(lambda x: x[1] >= now, rateData))
+        # Remove rates that are in the past
+        now      = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        rateData = list(filter(lambda x: x[1] >= now, self.rateData))
         
         # calculate the charge plan, and work out what's left afterwards
         (chargingPlan, dischargePlan) = self.calculateChargePlan(rateData, solarUsage, solarSurplus, usageAfterSolar)
@@ -396,7 +393,7 @@ class PowerControl(hass.Hass):
                     availableChargeRates.remove(chargeRate)
                     # update the battery profile based on the new charging plan
                     (batProfile, fullyCharged) = self.genBatLevelForecast(rateData, usageAfterSolar, chargingPlan)   
-        return fullyCharged
+        return (batProfile, fullyCharged)
 
     
     def calculateChargePlan(self, rateData, solarUsage, solarSurplus, usageAfterSolar):        
@@ -405,7 +402,7 @@ class PowerControl(hass.Hass):
         availableChargeRates = sorted(rateData, key=lambda x: x[2])
         
         # calculate the initial charging profile
-        self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
+        (batProfile, _) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
         
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
@@ -414,12 +411,12 @@ class PowerControl(hass.Hass):
             del availableChargeRates[-1]
             solarUsageForRate = self.powerForPeriod(solarUsage, mostExpenciveRate[0], mostExpenciveRate[1])
             if solarUsageForRate > 0:
-                adjustBy                = [(mostExpenciveRate[0], mostExpenciveRate[1], solarUsageForRate)]
-                newSolarSurplus         = self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b)
-                newUsageAfterSolar      = self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b)
-                newAvailableChargeRates = list(availableChargeRates)
-                newChargingPlan         = list(chargingPlan)
-                fullyCharged            = self.allocateChangingSlots(rateData, newAvailableChargeRates, newChargingPlan, newSolarSurplus, newUsageAfterSolar)    
+                adjustBy                   = [(mostExpenciveRate[0], mostExpenciveRate[1], solarUsageForRate)]
+                newSolarSurplus            = self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b)
+                newUsageAfterSolar         = self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b)
+                newAvailableChargeRates    = list(availableChargeRates)
+                newChargingPlan            = list(chargingPlan)
+                (batProfile, fullyCharged) = self.allocateChangingSlots(rateData, newAvailableChargeRates, newChargingPlan, newSolarSurplus, newUsageAfterSolar)    
                 # If we're still fully charged after swapping a slot to discharging, then make that the plan 
                 # of record by updating the arrays
                 if fullyCharged:
@@ -429,6 +426,7 @@ class PowerControl(hass.Hass):
                     availableChargeRates = newAvailableChargeRates
                     chargingPlan         = newChargingPlan
                     
+        self.printSeries(batProfile, "Battery profile")
         chargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])
         return (chargingPlan, dischargePlan)

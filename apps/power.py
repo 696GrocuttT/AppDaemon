@@ -76,7 +76,9 @@ class PowerControl(hass.Hass):
         self.set_state(self.batteryDischargeOutputEntityName, state=dischargeInfo, attributes={"planUpdateTime":  self.planUpdateTime,
                                                                                                "stateUpdateTime": now,
                                                                                                "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
-                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True)})
+                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
+                                                                                               "tariff":          self.pwTariff,
+                                                                                               "defPrice":        self.defPrice})
         self.set_state(self.eddiOutputEntityName,             state=eddiInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
                                                                                                "stateUpdateTime": now,
                                                                                                "plan":            self.seriesToString(self.eddiPlan, mergeable=True)})
@@ -241,17 +243,21 @@ class PowerControl(hass.Hass):
         self.mergeAndProcessData()
 
 
+    def mergeSeries(self, series):
+        mergedSeries = []
+        for item in series:
+            # If we already have an item in the merged list, and the last item of that list 
+            # has an end time that matches the start time of the new item. Merge them.
+            if mergedSeries and mergedSeries[-1][1] == item[0]:
+                mergedSeries[-1] = (mergedSeries[-1][0], item[1], mergedSeries[-1][2] + item[2])
+            else:
+                mergedSeries.append(item)
+        return mergedSeries
+        
+
     def seriesToString(self, series, mergeable=False):
         if mergeable:
-            mergedSeries = []
-            for item in series:
-                # If we already have an item in the merged list, and the last item of that list 
-                # has an end time that matches the start time of the new item. Merge them.
-                if mergedSeries and mergedSeries[-1][1] == item[0]:
-                    mergedSeries[-1] = (mergedSeries[-1][0], item[1], mergedSeries[-1][2] + item[2])
-                else:
-                    mergedSeries.append(item)
-            series = mergedSeries    
+            series = self.mergeSeries(series)
         if series and len(series[0]) > 3:
             strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3}".format(*x), series)
         else:
@@ -290,6 +296,16 @@ class PowerControl(hass.Hass):
         
         # Calculate the eddi plan based on any remaining surplus
         eddiPlan = self.calculateEddiPlan(rateData, postBatteryChargeSurplus)
+        
+        # Create a fake tariff with peak time covering the discharge plan
+        mergedDischargePlan = self.mergeSeries(dischargePlan)
+        midnight            = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        tariff              = list(map(lambda x: [int((x[0] - midnight).total_seconds()),
+                                                  int((x[1] - midnight).total_seconds())], mergedDischargePlan))
+        secondsInADay       = 24 * 60 * 60
+        tariff              = list(filter(lambda x: x[0] < secondsInADay, tariff))
+        self.defPrice       = "0.30 0.10"
+        self.pwTariff       = {"0.30 0.30": tariff}
         
         self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
         self.printSeries(dischargePlan, "Discharging plan", mergeable=True)

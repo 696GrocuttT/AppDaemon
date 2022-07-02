@@ -21,14 +21,15 @@ class PowerControl(hass.Hass):
         self.eddiPowerLimit                   = float(self.args['eddiPowerLimit'])
         self.minBuySelMargin                  = float(self.args['minBuySelMargin'])
         
-        self.solarData       = []
-        self.rateData        = []
-        self.usageData       = []
-        self.rawSolarData    = []
-        self.chargingPlan    = []
-        self.dischargePlan   = []
-        self.eddiPlan        = []
-        self.planUpdateTime  = None
+        self.solarData          = []
+        self.rateData           = []
+        self.usageData          = []
+        self.rawSolarData       = []
+        self.chargingPlan       = []
+        self.dischargePlan      = []
+        self.eddiPlan           = []
+        self.planUpdateTime     = None
+        self.prevMaxChargeCost  = 0.15 # this is just a best guess default rate to start with
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -426,7 +427,9 @@ class PowerControl(hass.Hass):
         availableChargeRates = sorted(rateData, key=lambda x: x[2])
         
         # calculate the initial charging profile
-        (batProfile, _, maxChargeCost) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
+        (batProfile, _, newMaxChargeCost) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
+        # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
+        maxChargeCost = newMaxChargeCost if chargingPlan else self.prevMaxChargeCost
         
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
@@ -455,6 +458,8 @@ class PowerControl(hass.Hass):
                     availableChargeRates = newAvailableChargeRates
                     chargingPlan         = newChargingPlan
 
+        # Update the cost of charging so we have an accurate number next time around
+        self.prevMaxChargeCost = maxChargeCost
         self.printSeries(batProfile, "Battery profile")
         chargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])

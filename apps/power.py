@@ -19,6 +19,7 @@ class PowerControl(hass.Hass):
         self.gasEfficiency                    = float(self.args['gasHotWaterEfficiency'])
         self.eddiTargetPower                  = float(self.args['eddiTargetPower'])
         self.eddiPowerLimit                   = float(self.args['eddiPowerLimit'])
+        self.minBuySelMargin                  = float(self.args['minBuySelMargin'])
         
         self.solarData       = []
         self.rateData        = []
@@ -369,6 +370,7 @@ class PowerControl(hass.Hass):
         # battery. It doesn't make sure we charge the battery, that comes later.
         batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
         batteryRemaining = self.batteryEnergy
+        maxChargeCost    = 0
         for rate in rateData:
             # Have we got enough energy for this time slot
             usage            = self.powerForPeriod(usageAfterSolar, rate[0], rate[1])
@@ -388,6 +390,9 @@ class PowerControl(hass.Hass):
                         # we can only use a charging slot once, so remove it from the available list
                         availableChargeRates.remove(chargeRate)
                         chargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
+                        # Since the charge rates are already sorted in cost order, we know the current 
+                        # one we're adding is always the most expensive one so far.
+                        maxChargeCost = chargeRate[2]
                         if batteryRemaining > batReserveEnergy:
                             break    
 
@@ -407,9 +412,12 @@ class PowerControl(hass.Hass):
                     chargingPlan.append((chargeRate[0], chargeRate[1], min(power, maxCharge)))
                     # we can only use a charging slot once, so remove it from the available list            
                     availableChargeRates.remove(chargeRate)
+                    # Since the charge rates are already sorted in cost order, we know the current 
+                    # one we're adding is always the most expensive one so far.
+                    maxChargeCost = chargeRate[2]
                     # update the battery profile based on the new charging plan
                     (batProfile, fullyCharged) = self.genBatLevelForecast(rateData, usageAfterSolar, chargingPlan)   
-        return (batProfile, fullyCharged)
+        return (batProfile, fullyCharged, maxChargeCost)
 
     
     def calculateChargePlan(self, rateData, solarUsage, solarSurplus, usageAfterSolar):        
@@ -418,7 +426,7 @@ class PowerControl(hass.Hass):
         availableChargeRates = sorted(rateData, key=lambda x: x[2])
         
         # calculate the initial charging profile
-        (batProfile, _) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
+        (batProfile, _, maxChargeCost) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
         
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
@@ -432,16 +440,21 @@ class PowerControl(hass.Hass):
                 newUsageAfterSolar         = self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b)
                 newAvailableChargeRates    = list(availableChargeRates)
                 newChargingPlan            = list(chargingPlan)
-                (batProfile, fullyCharged) = self.allocateChangingSlots(rateData, newAvailableChargeRates, newChargingPlan, newSolarSurplus, newUsageAfterSolar)    
+                (batProfile, fullyCharged, 
+                 newMaxChargeCost)         = self.allocateChangingSlots(rateData, newAvailableChargeRates, newChargingPlan, newSolarSurplus, newUsageAfterSolar)    
+                newMaxChargeCost           = max(maxChargeCost, newMaxChargeCost)
                 # If we're still fully charged after swapping a slot to discharging, then make that the plan 
-                # of record by updating the arrays
-                if fullyCharged:
+                # of record by updating the arrays. We also skip a potential discharge period if the 
+                # difference between the cost of the charge / discharge periods isn't greater than the 
+                # threshold. This reduces battery cycling if there's not much to be gained from it.
+                if fullyCharged and mostExpenciveRate[2] - newMaxChargeCost > self.minBuySelMargin:
+                    maxChargeCost        = newMaxChargeCost
                     dischargePlan.append(adjustBy[0])
                     solarSurplus         = newSolarSurplus         
                     usageAfterSolar      = newUsageAfterSolar     
                     availableChargeRates = newAvailableChargeRates
                     chargingPlan         = newChargingPlan
-                    
+
         self.printSeries(batProfile, "Battery profile")
         chargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])

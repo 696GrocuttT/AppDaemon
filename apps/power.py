@@ -27,6 +27,7 @@ class PowerControl(hass.Hass):
         self.usageData          = []
         self.rawSolarData       = []
         self.chargingPlan       = []
+        self.standbyPlan        = []
         self.dischargePlan      = []
         self.eddiPlan           = []
         self.planUpdateTime     = None
@@ -79,6 +80,7 @@ class PowerControl(hass.Hass):
                                                                                                "stateUpdateTime": now,
                                                                                                "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
                                                                                                "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
+                                                                                               "standbyPlan":     self.seriesToString(self.standbyPlan,   mergeable=True),
                                                                                                "tariff":          self.pwTariff,
                                                                                                "defPrice":        self.defPrice})
         self.set_state(self.eddiOutputEntityName,             state=eddiInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
@@ -279,6 +281,14 @@ class PowerControl(hass.Hass):
                         a))
 
 
+    def seriesToTariff(self, series, midnight):
+        mergedPlan    = self.mergeSeries(series)
+        tariff        = list(map(lambda x: [int((x[0] - midnight).total_seconds()),
+                                            int((x[1] - midnight).total_seconds())], mergedPlan))
+        secondsInADay = 24 * 60 * 60
+        return list(filter(lambda x: x[0] < secondsInADay, tariff))
+
+
     def mergeAndProcessData(self):
         self.log("Updating schedule")        
         # Calculate the solar surplus after house load, we base this on the usage time 
@@ -295,24 +305,33 @@ class PowerControl(hass.Hass):
         # calculate the charge plan, and work out what's left afterwards
         (chargingPlan, dischargePlan) = self.calculateChargePlan(rateData, solarUsage, solarSurplus, usageAfterSolar)
         postBatteryChargeSurplus      = self.opOnSeries(solarSurplus, chargingPlan, lambda a, b: a-b)
+        # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
+        # but we don't want to charge or discharge.
+        standbyPlan = []
+        for rate in rateData:
+            curSolarSurplus = self.powerForPeriod(solarSurplus,  rate[0], rate[1])
+            isCharge        = self.powerForPeriod(chargingPlan,  rate[0], rate[1]) > 0
+            isDischarge     = self.powerForPeriod(dischargePlan, rate[0], rate[1]) > 0
+            if (curSolarSurplus > 0) and not (isCharge or isDischarge): 
+                standbyPlan.append((rate[0], rate[1], curSolarSurplus))
         
         # Calculate the eddi plan based on any remaining surplus
         eddiPlan = self.calculateEddiPlan(rateData, postBatteryChargeSurplus)
         
         # Create a fake tariff with peak time covering the discharge plan
-        mergedDischargePlan = self.mergeSeries(dischargePlan)
-        midnight            = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        tariff              = list(map(lambda x: [int((x[0] - midnight).total_seconds()),
-                                                  int((x[1] - midnight).total_seconds())], mergedDischargePlan))
-        secondsInADay       = 24 * 60 * 60
-        tariff              = list(filter(lambda x: x[0] < secondsInADay, tariff))
-        self.defPrice       = "0.30 0.10"
-        self.pwTariff       = {"0.30 0.30": tariff}
+        midnight       = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        peakPeriods    = self.seriesToTariff(dischargePlan, midnight)
+        midPeakPeriods = self.seriesToTariff(standbyPlan,   midnight)
+        self.defPrice  = "0.30 0.10"
+        self.pwTariff  = {"0.30 0.30": peakPeriods,
+                          "0.30 0.20": midPeakPeriods}
         
         self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
+        self.printSeries(standbyPlan,   "Standby plan",     mergeable=True)
         self.printSeries(dischargePlan, "Discharging plan", mergeable=True)
         self.printSeries(eddiPlan,      "Eddi plan",        mergeable=True)
         self.chargingPlan   = chargingPlan
+        self.standbyPlan    = standbyPlan
         self.dischargePlan  = dischargePlan
         self.eddiPlan       = eddiPlan
         

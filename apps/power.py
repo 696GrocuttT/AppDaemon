@@ -20,6 +20,7 @@ class PowerControl(hass.Hass):
         self.eddiTargetPower                  = float(self.args['eddiTargetPower'])
         self.eddiPowerLimit                   = float(self.args['eddiPowerLimit'])
         self.minBuySelMargin                  = float(self.args['minBuySelMargin'])
+        self.prevMaxChargeCostEntity          = self.args['batteryChargeCostEntity']
         
         self.solarData          = []
         self.rateData           = []
@@ -29,7 +30,6 @@ class PowerControl(hass.Hass):
         self.dischargePlan      = []
         self.eddiPlan           = []
         self.planUpdateTime     = None
-        self.prevMaxChargeCost  = 0.15 # this is just a best guess default rate to start with
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -429,7 +429,8 @@ class PowerControl(hass.Hass):
         # calculate the initial charging profile
         (batProfile, _, newMaxChargeCost) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
         # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
-        maxChargeCost = newMaxChargeCost if chargingPlan else self.prevMaxChargeCost
+        prevMaxChargeCost = self.get_state(self.prevMaxChargeCostEntity)
+        maxChargeCost     = newMaxChargeCost if chargingPlan else prevMaxChargeCost
         
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
@@ -459,7 +460,7 @@ class PowerControl(hass.Hass):
                     chargingPlan         = newChargingPlan
 
         # Update the cost of charging so we have an accurate number next time around
-        self.prevMaxChargeCost = maxChargeCost
+        self.set_state(self.prevMaxChargeCostEntity, state=maxChargeCost)
         self.printSeries(batProfile, "Battery profile")
         chargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])

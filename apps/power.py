@@ -322,9 +322,9 @@ class PowerControl(hass.Hass):
         midnight       = now.replace(hour=0, minute=0, second=0, microsecond=0)
         peakPeriods    = self.seriesToTariff(dischargePlan, midnight)
         midPeakPeriods = self.seriesToTariff(standbyPlan,   midnight)
-        self.defPrice  = "0.30 0.10"
-        self.pwTariff  = {"0.30 0.30": peakPeriods,
-                          "0.30 0.20": midPeakPeriods}
+        self.defPrice  = "0.30 0.10 OFF_PEAK"
+        self.pwTariff  = {"0.30 0.30 ON_PEAK":      peakPeriods,
+                          "0.30 0.20 PARTIAL_PEAK": midPeakPeriods}
         
         self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
         self.printSeries(standbyPlan,   "Standby plan",     mergeable=True)

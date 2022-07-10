@@ -13,6 +13,7 @@ class PowerControl(hass.Hass):
         self.usageDaysHistory                 = self.args['usageIaysHistory']
         self.eddiOutputEntityName             = self.args['eddiOutputEntity']
         self.batteryDischargeOutputEntityName = self.args['batteryDischargeOutputEntity']
+        self.batteryModeOutputEntityName      = self.args['batteryModeOutputEntity']
         self.usageMargin                      = float(self.args['houseLoadMargin'])
         self.maxChargeRate                    = float(self.args['batteryChargeRateLimit'])
         self.batReservePct                    = float(self.args['batteryReservePercentage'])
@@ -73,10 +74,21 @@ class PowerControl(hass.Hass):
         now           = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
         slotMidTime   = now + timedelta(minutes=15)
         dischargeInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan), None)
+        chargeInfo    = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.chargingPlan),  None)
+        standbyInfo   = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.standbyPlan),   None)
+        modeInfo      = ("Discharge"    if dischargeInfo else
+                         "Standby"      if standbyInfo   else  "Solar charge")        
         dischargeInfo = "on" if dischargeInfo else "off"
         eddiInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan),      None)
         eddiInfo      = "on" if eddiInfo else "off"
         self.set_state(self.batteryDischargeOutputEntityName, state=dischargeInfo, attributes={"planUpdateTime":  self.planUpdateTime,
+                                                                                               "stateUpdateTime": now,
+                                                                                               "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
+                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
+                                                                                               "standbyPlan":     self.seriesToString(self.standbyPlan,   mergeable=True),
+                                                                                               "tariff":          self.pwTariff,
+                                                                                               "defPrice":        self.defPrice})
+        self.set_state(self.batteryModeOutputEntityName,      state=modeInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
                                                                                                "stateUpdateTime": now,
                                                                                                "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
                                                                                                "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),

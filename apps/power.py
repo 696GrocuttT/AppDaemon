@@ -460,7 +460,7 @@ class PowerControl(hass.Hass):
         # calculate the initial charging profile
         (batProfile, _, newMaxChargeCost) = self.allocateChangingSlots(rateData, availableChargeRates, chargingPlan, solarSurplus, usageAfterSolar)
         # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
-        prevMaxChargeCost = self.get_state(self.prevMaxChargeCostEntity)
+        prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
         maxChargeCost     = newMaxChargeCost if chargingPlan else prevMaxChargeCost
         
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so

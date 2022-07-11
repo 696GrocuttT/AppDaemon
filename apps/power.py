@@ -68,8 +68,9 @@ class PowerControl(hass.Hass):
 
     def updateOutputs(self, kwargs):
         self.log("Updating outputs")
-        # The the time 15 minutes in the future (ie the middle of a time slot) to find
-        # a slot that starts now. This avoids any issues with this event firing a little 
+        self.mergeAndProcessData()
+        # The time 15 minutes in the future (ie the middle of a time slot) to find a 
+        # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.
         now           = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
         slotMidTime   = now + timedelta(minutes=15)
@@ -104,7 +105,6 @@ class PowerControl(hass.Hass):
         new = float(new)
         self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(self.gasRate, new))
         self.gasRate = new
-        self.mergeAndProcessData()    
                     
         
     def batteryCapacityChanged(self, entity, attribute, old, new, kwargs):
@@ -112,8 +112,7 @@ class PowerControl(hass.Hass):
         # only recalculate everything if there's been a significant change in value
         if abs(self.batteryCapacity - new) > 0.1:
             self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.batteryCapacity, new))
-            self.batteryCapacity = new
-            self.mergeAndProcessData()        
+            self.batteryCapacity = new        
 
 
     def batteryEnergyChanged(self, entity, attribute, old, new, kwargs):
@@ -122,19 +121,16 @@ class PowerControl(hass.Hass):
         if abs(self.batteryEnergy - new) > 0.1:
             self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.batteryEnergy, new))
             self.batteryEnergy = new
-            self.mergeAndProcessData()
         
         
     def solarChanged(self, entity, attribute, old, new, kwargs):
         index                    = kwargs['kwargs']
         self.rawSolarData[index] = new
         self.parseSolar()
-        self.mergeAndProcessData()
 
     
     def ratesChanged(self, entity, attribute, old, new, kwargs):
         self.parseRates(new)
-        self.mergeAndProcessData()
 
     
     def parseSolar(self):
@@ -255,8 +251,9 @@ class PowerControl(hass.Hass):
         forecastUsage.extend(tomorrowsForecast)
         self.printSeries(forecastUsage, "Usage forecast")
         self.usageData = forecastUsage
-        # process the update
-        self.mergeAndProcessData()
+        # If there's not been an output update so far, force it now
+        if not bool(self.planUpdateTime): 
+            self.updateOutputs(None)        
 
 
     def mergeSeries(self, series):
@@ -346,12 +343,7 @@ class PowerControl(hass.Hass):
         self.standbyPlan    = standbyPlan
         self.dischargePlan  = dischargePlan
         self.eddiPlan       = eddiPlan
-        
-        # If there's not been an output update so far, force it now
-        forceUpdate         = not bool(self.planUpdateTime)
         self.planUpdateTime = now
-        if forceUpdate: 
-            self.updateOutputs(None)
 
             
     def calculateEddiPlan(self, rateData, solarSurplus):

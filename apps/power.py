@@ -384,6 +384,13 @@ class PowerControl(hass.Hass):
         # miday on the last day of the forecast
         lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
         fullChargeAfterMidday = any(x[0] >= lastMidday and x[3] for x in batForecast)
+        # We also indicate the battery is fully charged if its after midday now, and its currently 
+        # fully charged. This prevents an issue where the current time slot is never allowed to 
+        # discharge if we don't have a charging period for tomorrow mapped out already
+        if not fullChargeAfterMidday:
+            now = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+            if self.batteryEnergy >= self.batteryCapacity and now >= lastMidday:
+                fullChargeAfterMidday = True
         return (batForecast, fullChargeAfterMidday)
     
     

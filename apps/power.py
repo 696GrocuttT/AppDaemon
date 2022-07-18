@@ -109,18 +109,14 @@ class PowerControl(hass.Hass):
         
     def batteryCapacityChanged(self, entity, attribute, old, new, kwargs):
         new = float(new) / 1000
-        # only recalculate everything if there's been a significant change in value
-        if abs(self.batteryCapacity - new) > 0.1:
-            self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.batteryCapacity, new))
-            self.batteryCapacity = new        
+        self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.batteryCapacity, new))
+        self.batteryCapacity = new        
 
 
     def batteryEnergyChanged(self, entity, attribute, old, new, kwargs):
         new = float(new) / 1000
-        # only recalculate everything if there's been a significant change in value
-        if abs(self.batteryEnergy - new) > 0.1:
-            self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.batteryEnergy, new))
-            self.batteryEnergy = new
+        self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.batteryEnergy, new))
+        self.batteryEnergy = new
         
         
     def solarChanged(self, entity, attribute, old, new, kwargs):
@@ -328,13 +324,17 @@ class PowerControl(hass.Hass):
         eddiPlan = self.calculateEddiPlan(rateData, postBatteryChargeSurplus)
         
         # Create a fake tariff with peak time covering the discharge plan
-        midnight       = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        peakPeriods    = self.seriesToTariff(dischargePlan, midnight)
-        midPeakPeriods = self.seriesToTariff(standbyPlan,   midnight)
-        self.defPrice  = "0.30 0.10 OFF_PEAK"
-        self.pwTariff  = {"0.30 0.30 ON_PEAK":      peakPeriods,
-                          "0.30 0.20 PARTIAL_PEAK": midPeakPeriods}
-        
+        midnight              = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Filter out anything except the next hour. This prevents the powerwall not behaving properly
+        # because it thinks it won't have enough time to charge later.
+        nextHourEnd           = now + timedelta(hours=1)
+        dischargePlanNextHour = list(filter(lambda x: x[1] <= nextHourEnd, dischargePlan))
+        standbyPlanNextHour   = list(filter(lambda x: x[1] <= nextHourEnd, standbyPlan))
+        peakPeriods           = self.seriesToTariff(dischargePlanNextHour, midnight)
+        midPeakPeriods        = self.seriesToTariff(standbyPlanNextHour,   midnight)
+        self.defPrice         = "0.30 0.10 OFF_PEAK"
+        self.pwTariff         = {"0.30 0.30 ON_PEAK":      peakPeriods,
+                                 "0.30 0.20 PARTIAL_PEAK": midPeakPeriods}
         self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
         self.printSeries(standbyPlan,   "Standby plan",     mergeable=True)
         self.printSeries(dischargePlan, "Discharging plan", mergeable=True)
@@ -389,7 +389,11 @@ class PowerControl(hass.Hass):
         # discharge if we don't have a charging period for tomorrow mapped out already
         if not fullChargeAfterMidday:
             now = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-            if self.batteryEnergy >= self.batteryCapacity and now >= lastMidday:
+            # For full charge detection we compare against 99% full, this is so any minor changes 
+            # is battery capacity or energe when we're basically fully charged, and won't charge 
+            # any more, don't cause any problems.
+            soc = (self.batteryEnergy / self.batteryCapacity) * 100
+            if soc > 99 and now >= lastMidday:
                 fullChargeAfterMidday = True
         return (batForecast, fullChargeAfterMidday)
     
@@ -491,6 +495,8 @@ class PowerControl(hass.Hass):
 
         # Update the cost of charging so we have an accurate number next time around
         self.set_state(self.prevMaxChargeCostEntity, state=maxChargeCost)
+        soc = (self.batteryEnergy / self.batteryCapacity) * 100
+        self.log("Current battery change {0:.3f}".format(soc))
         self.printSeries(batProfile, "Battery profile")
         chargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])

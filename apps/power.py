@@ -8,20 +8,19 @@ import re
 class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
-        self.solarForecastMargin              = float(self.args['solarForecastMargin'])
-        self.houseLoadEntityName              = self.args['houseLoadEntity']
-        self.usageDaysHistory                 = self.args['usageIaysHistory']
-        self.eddiOutputEntityName             = self.args['eddiOutputEntity']
-        self.batteryDischargeOutputEntityName = self.args['batteryDischargeOutputEntity']
-        self.batteryModeOutputEntityName      = self.args['batteryModeOutputEntity']
-        self.usageMargin                      = float(self.args['houseLoadMargin'])
-        self.maxChargeRate                    = float(self.args['batteryChargeRateLimit'])
-        self.batReservePct                    = float(self.args['batteryReservePercentage'])
-        self.gasEfficiency                    = float(self.args['gasHotWaterEfficiency'])
-        self.eddiTargetPower                  = float(self.args['eddiTargetPower'])
-        self.eddiPowerLimit                   = float(self.args['eddiPowerLimit'])
-        self.minBuySelMargin                  = float(self.args['minBuySelMargin'])
-        self.prevMaxChargeCostEntity          = self.args['batteryChargeCostEntity']
+        self.solarForecastMargin         = float(self.args['solarForecastMargin'])
+        self.houseLoadEntityName         = self.args['houseLoadEntity']
+        self.usageDaysHistory            = self.args['usageIaysHistory']
+        self.eddiOutputEntityName        = self.args['eddiOutputEntity']
+        self.batteryModeOutputEntityName = self.args['batteryModeOutputEntity']
+        self.usageMargin                 = float(self.args['houseLoadMargin'])
+        self.maxChargeRate               = float(self.args['batteryChargeRateLimit'])
+        self.batReservePct               = float(self.args['batteryReservePercentage'])
+        self.gasEfficiency               = float(self.args['gasHotWaterEfficiency'])
+        self.eddiTargetPower             = float(self.args['eddiTargetPower'])
+        self.eddiPowerLimit              = float(self.args['eddiPowerLimit'])
+        self.minBuySelMargin             = float(self.args['minBuySelMargin'])
+        self.prevMaxChargeCostEntity     = self.args['batteryChargeCostEntity']
         
         self.solarData          = []
         self.rateData           = []
@@ -82,23 +81,16 @@ class PowerControl(hass.Hass):
         dischargeInfo = "on" if dischargeInfo else "off"
         eddiInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan),      None)
         eddiInfo      = "on" if eddiInfo else "off"
-        self.set_state(self.batteryDischargeOutputEntityName, state=dischargeInfo, attributes={"planUpdateTime":  self.planUpdateTime,
-                                                                                               "stateUpdateTime": now,
-                                                                                               "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
-                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
-                                                                                               "standbyPlan":     self.seriesToString(self.standbyPlan,   mergeable=True),
-                                                                                               "tariff":          self.pwTariff,
-                                                                                               "defPrice":        self.defPrice})
-        self.set_state(self.batteryModeOutputEntityName,      state=modeInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
-                                                                                               "stateUpdateTime": now,
-                                                                                               "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
-                                                                                               "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
-                                                                                               "standbyPlan":     self.seriesToString(self.standbyPlan,   mergeable=True),
-                                                                                               "tariff":          self.pwTariff,
-                                                                                               "defPrice":        self.defPrice})
-        self.set_state(self.eddiOutputEntityName,             state=eddiInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
-                                                                                               "stateUpdateTime": now,
-                                                                                               "plan":            self.seriesToString(self.eddiPlan, mergeable=True)})
+        self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
+                                                                                          "stateUpdateTime": now,
+                                                                                          "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
+                                                                                          "chargingPlan":    self.seriesToString(self.chargingPlan,  mergeable=True),
+                                                                                          "standbyPlan":     self.seriesToString(self.standbyPlan,   mergeable=True),
+                                                                                          "tariff":          self.pwTariff,
+                                                                                          "defPrice":        self.defPrice})
+        self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
+                                                                                          "stateUpdateTime": now,
+                                                                                          "plan":            self.seriesToString(self.eddiPlan, mergeable=True)})
 
 
     def gasRateChanged(self, entity, attribute, old, new, kwargs):

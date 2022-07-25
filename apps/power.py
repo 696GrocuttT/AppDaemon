@@ -8,29 +8,31 @@ import re
 class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
-        self.solarForecastMargin         = float(self.args['solarForecastMargin'])
-        self.houseLoadEntityName         = self.args['houseLoadEntity']
-        self.usageDaysHistory            = self.args['usageIaysHistory']
-        self.eddiOutputEntityName        = self.args['eddiOutputEntity']
-        self.batteryModeOutputEntityName = self.args['batteryModeOutputEntity']
-        self.usageMargin                 = float(self.args['houseLoadMargin'])
-        self.maxChargeRate               = float(self.args['batteryChargeRateLimit'])
-        self.batReservePct               = float(self.args['batteryReservePercentage'])
-        self.gasEfficiency               = float(self.args['gasHotWaterEfficiency'])
-        self.eddiTargetPower             = float(self.args['eddiTargetPower'])
-        self.eddiPowerLimit              = float(self.args['eddiPowerLimit'])
-        self.minBuySelMargin             = float(self.args['minBuySelMargin'])
-        self.prevMaxChargeCostEntity     = self.args['batteryChargeCostEntity']
+        self.solarForecastMargin          = float(self.args['solarForecastMargin'])
+        self.houseLoadEntityName          = self.args['houseLoadEntity']
+        self.usageDaysHistory             = self.args['usageDaysHistory']
+        self.eddiOutputEntityName         = self.args['eddiOutputEntity']
+        self.batteryModeOutputEntityName  = self.args['batteryModeOutputEntity']
+        self.batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
+        self.usageMargin                  = float(self.args['houseLoadMargin'])
+        self.maxChargeRate                = float(self.args['batteryChargeRateLimit'])
+        self.batReservePct                = float(self.args['batteryReservePercentage'])
+        self.gasEfficiency                = float(self.args['gasHotWaterEfficiency'])
+        self.eddiTargetPower              = float(self.args['eddiTargetPower'])
+        self.eddiPowerLimit               = float(self.args['eddiPowerLimit'])
+        self.minBuySelMargin              = float(self.args['minBuySelMargin'])
+        self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
         
-        self.solarData          = []
-        self.rateData           = []
-        self.usageData          = []
-        self.rawSolarData       = []
-        self.chargingPlan       = []
-        self.standbyPlan        = []
-        self.dischargePlan      = []
-        self.eddiPlan           = []
-        self.planUpdateTime     = None
+        self.solarData            = []
+        self.rateData             = []
+        self.usageData            = []
+        self.rawSolarData         = []
+        self.chargingPlan         = []
+        self.standbyPlan          = []
+        self.dischargePlan        = []
+        self.dischargeToHousePlan = []
+        self.eddiPlan             = []
+        self.planUpdateTime       = None
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -78,9 +80,18 @@ class PowerControl(hass.Hass):
         standbyInfo   = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.standbyPlan),   None)
         modeInfo      = ("Discharge"    if dischargeInfo else
                          "Standby"      if standbyInfo   else  "Solar charge")        
-        dischargeInfo = "on" if dischargeInfo else "off"
         eddiInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan),      None)
         eddiInfo      = "on" if eddiInfo else "off"
+        # generate a summary string for the combined plan
+        summary       = ( list(map(lambda x: ("D", x[0]), self.mergeSeries(self.dischargePlan))) +
+                          list(map(lambda x: ("C", x[0]), self.mergeSeries(self.chargingPlan)))  +
+                          list(map(lambda x: ("S", x[0]), self.mergeSeries(self.standbyPlan)))   + 
+                          list(map(lambda x: ("H", x[0]), self.mergeSeries(self.dischargeToHousePlan))) )
+        summary.sort(key=lambda x: x[1])
+        summary       = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
+        summary       = ",".join(summary)
+
+        self.set_state(self.batteryPlanSummaryEntityName, state=summary)
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":  self.planUpdateTime,
                                                                                           "stateUpdateTime": now,
                                                                                           "dischargePlan":   self.seriesToString(self.dischargePlan, mergeable=True),
@@ -301,7 +312,7 @@ class PowerControl(hass.Hass):
         
         # calculate the charge plan, and work out what's left afterwards
         (chargingPlan, dischargePlan) = self.calculateChargePlan(rateData, solarUsage, solarSurplus, usageAfterSolar)
-        postBatteryChargeSurplus      = self.opOnSeries(solarSurplus, chargingPlan, lambda a, b: a-b)
+        postBatteryChargeSurplus      = self.opOnSeries(solarSurplus, chargingPlan,   lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
         # but we don't want to charge or discharge.
         standbyPlan = []
@@ -311,7 +322,13 @@ class PowerControl(hass.Hass):
             isDischarge     = self.powerForPeriod(dischargePlan, rate[0], rate[1]) > 0
             if (curSolarSurplus > 0) and not (isCharge or isDischarge): 
                 standbyPlan.append((rate[0], rate[1], curSolarSurplus))
-        
+        # Create a background plan for info only that shows when we're just powering the house from the battery.
+        usageForRateSlotsOnly = self.opOnSeries(rateData, self.usageData, lambda a, b: b)
+        dischargeToHousePlan  = self.opOnSeries(usageForRateSlotsOnly, chargingPlan,  lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  standbyPlan,   lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  dischargePlan, lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
+
         # Calculate the eddi plan based on any remaining surplus
         eddiPlan = self.calculateEddiPlan(rateData, postBatteryChargeSurplus)
         
@@ -327,15 +344,17 @@ class PowerControl(hass.Hass):
         self.defPrice         = "0.10 0.10 OFF_PEAK"
         self.pwTariff         = {"0.90 0.90 ON_PEAK":      peakPeriods,
                                  "0.40 0.40 PARTIAL_PEAK": midPeakPeriods}
-        self.printSeries(chargingPlan,  "Charging plan",    mergeable=True)
-        self.printSeries(standbyPlan,   "Standby plan",     mergeable=True)
-        self.printSeries(dischargePlan, "Discharging plan", mergeable=True)
-        self.printSeries(eddiPlan,      "Eddi plan",        mergeable=True)
-        self.chargingPlan   = chargingPlan
-        self.standbyPlan    = standbyPlan
-        self.dischargePlan  = dischargePlan
-        self.eddiPlan       = eddiPlan
-        self.planUpdateTime = now
+        self.printSeries(chargingPlan,         "Charging plan",             mergeable=True)
+        self.printSeries(standbyPlan,          "Standby plan",              mergeable=True)
+        self.printSeries(dischargePlan,        "Discharging plan",          mergeable=True)
+        self.printSeries(dischargeToHousePlan, "Discharging to house plan", mergeable=True)
+        self.printSeries(eddiPlan,             "Eddi plan",                 mergeable=True)
+        self.chargingPlan         = chargingPlan
+        self.standbyPlan          = standbyPlan
+        self.dischargePlan        = dischargePlan
+        self.dischargeToHousePlan = dischargeToHousePlan
+        self.eddiPlan             = eddiPlan
+        self.planUpdateTime       = now
 
             
     def calculateEddiPlan(self, rateData, solarSurplus):

@@ -296,7 +296,6 @@ class PowerControl(hass.Hass):
         return list(map(lambda aSample: ( aSample[0], 
                                      aSample[1], 
                                      operation(aSample[2], self.powerForPeriod(b, aSample[0], aSample[1])) ),
-                                             
                         a))
 
 
@@ -346,16 +345,16 @@ class PowerControl(hass.Hass):
         
         # Create a fake tariff with peak time covering the discharge plan
         midnight              = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Filter out anything except the next hour. This prevents the powerwall not behaving properly
+        # Filter out anything except the 2 hours. This prevents the powerwall not behaving properly
         # because it thinks it won't have enough time to charge later.
-        nextHourEnd           = now + timedelta(hours=1)
-        dischargePlanNextHour = list(filter(lambda x: x[1] <= nextHourEnd, dischargePlan))
-        standbyPlanNextHour   = list(filter(lambda x: x[1] <= nextHourEnd, standbyPlan))
+        tariffEnd             = now + timedelta(hours=2)
+        dischargePlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, dischargePlan))
+        standbyPlanNextHour   = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
         peakPeriods           = self.seriesToTariff(dischargePlanNextHour, midnight)
         midPeakPeriods        = self.seriesToTariff(standbyPlanNextHour,   midnight)
+        combinedPeakPeriods   = sorted(peakPeriods + midPeakPeriods, key=lambda x: x[0])
         self.defPrice         = "0.10 0.10 OFF_PEAK"
-        self.pwTariff         = {"0.90 0.90 ON_PEAK":      peakPeriods,
-                                 "0.40 0.40 PARTIAL_PEAK": midPeakPeriods}
+        self.pwTariff         = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
         self.printSeries(solarChargingPlan,    "Solar charging plan",       mergeable=True)
         self.printSeries(standbyPlan,          "Standby plan",              mergeable=True)
         self.printSeries(dischargePlan,        "Discharging plan",          mergeable=True)

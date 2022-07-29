@@ -350,9 +350,9 @@ class PowerControl(hass.Hass):
         tariffEnd             = now + timedelta(hours=2)
         dischargePlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, dischargePlan))
         standbyPlanNextHour   = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
-        peakPeriods           = self.seriesToTariff(dischargePlanNextHour, midnight)
-        midPeakPeriods        = self.seriesToTariff(standbyPlanNextHour,   midnight)
-        combinedPeakPeriods   = sorted(peakPeriods + midPeakPeriods, key=lambda x: x[0])
+        combinedPeakPlan      = sorted(dischargePlanNextHour + standbyPlanNextHour, key=lambda x: x[0])
+        combinedPeakPlan      = self.mergeSeries(combinedPeakPlan)
+        combinedPeakPeriods   = self.seriesToTariff(combinedPeakPlan, midnight)
         self.defPrice         = "0.10 0.10 OFF_PEAK"
         self.pwTariff         = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
         self.printSeries(solarChargingPlan,    "Solar charging plan",       mergeable=True)

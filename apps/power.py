@@ -369,17 +369,18 @@ class PowerControl(hass.Hass):
         eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus)
         
         # Create a fake tariff with peak time covering the discharge plan
-        midnight              = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        midnight                     = now.replace(hour=0, minute=0, second=0, microsecond=0)
         # Filter out anything except the 2 hours. This prevents the powerwall not behaving properly
         # because it thinks it won't have enough time to charge later.
-        tariffEnd             = now + timedelta(hours=2)
-        dischargePlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, dischargePlan))
-        standbyPlanNextHour   = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
-        combinedPeakPlan      = sorted(dischargePlanNextHour + standbyPlanNextHour, key=lambda x: x[0])
-        combinedPeakPlan      = self.mergeSeries(combinedPeakPlan)
-        combinedPeakPeriods   = self.seriesToTariff(combinedPeakPlan, midnight)
-        self.defPrice         = "0.10 0.10 OFF_PEAK"
-        self.pwTariff         = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
+        tariffEnd                    = now + timedelta(hours=2)
+        dischargePlanNextHour        = list(filter(lambda x: x[1] <= tariffEnd, dischargePlan))
+        standbyPlanNextHour          = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
+        houseGridPoweredPlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, houseGridPoweredPlan))
+        combinedPeakPlan             = sorted(dischargePlanNextHour + standbyPlanNextHour + houseGridPoweredPlanNextHour, key=lambda x: x[0])
+        combinedPeakPlan             = self.mergeSeries(combinedPeakPlan)
+        combinedPeakPeriods          = self.seriesToTariff(combinedPeakPlan, midnight)
+        self.defPrice                = "0.10 0.10 OFF_PEAK"
+        self.pwTariff                = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
         self.printSeries(solarChargingPlan,    "Solar charging plan",       mergeable=True)
         self.printSeries(gridChargingPlan,     "Grid charging plan",        mergeable=True)
         self.printSeries(houseGridPoweredPlan, "House grid powered plan",   mergeable=True)
@@ -473,9 +474,10 @@ class PowerControl(hass.Hass):
 
     def chooseRate3(self, rateA, rateB, rateC, notAfterTime=None):
         (foundRate, isRateA)  = self.chooseRate(rateA,     rateB, notAfterTime)
+        foundRate             = [foundRate] if foundRate else []
         (foundRate, isRateAB) = self.chooseRate(foundRate, rateC, notAfterTime)
-        rateId = (0 if isRateA  else
-                  1 if isRateAB else 2)
+        rateId = (2 if not isRateAB else
+                  0 if     isRateA  else 1)
         return (foundRate, rateId)
 
 
@@ -485,7 +487,9 @@ class PowerControl(hass.Hass):
         # surplus) where we don't want to remove an entry from the availableChargeRates array, 
         # but we need to remove it locally so we can keep track of which items we've used, and 
         # which are still available
-        availableChargeRatesLocal = list(availableChargeRates)
+        availableChargeRatesLocal          = list(availableChargeRates)
+        availableImportRatesLocal          = list(availableImportRates)
+        availableHouseGridPowertRatesLocal = list(availableHouseGridPowertRates)
         # Walk through the time slots (using the rates as a base timeline) predicting the battery 
         # capacity at the end of each time slot. If we get below the reserve level, add the cheapest 
         # previous rate to the charge plan. This Section basically makes sure we don't flatten the 
@@ -495,16 +499,18 @@ class PowerControl(hass.Hass):
         maxChargeCost    = 0
         for rate in exportRateData:
             # Have we got enough energy for this time slot
-            usage            = self.powerForPeriod(usageAfterSolar,   rate[0], rate[1])
-            charge           = self.powerForPeriod(solarChargingPlan, rate[0], rate[1])
+            usage            =  self.powerForPeriod(usageAfterSolar,      rate[0], rate[1])
+            charge           = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) +
+                                self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]) +
+                                self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]))
             batteryRemaining = batteryRemaining - usage + charge
             while batteryRemaining <= batReserveEnergy:
                 # We need to add a charging slot. This won't select any slots that are in the future
-                (chargeRate, isSolarRate) = self.chooseRate(availableChargeRatesLocal, availableImportRates, rate[0])
-                timeInSlot                = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
+                (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPowertRatesLocal, rate[0])
+                timeInSlot           = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 if chargeRate:
                     willCharge = True
-                    if isSolarRate:
+                    if rateId == 0: # solar
                         maxCharge  = timeInSlot * self.maxChargeRate
                         power      = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
                         # We only add a charging slot if there's solar surplus
@@ -514,17 +520,26 @@ class PowerControl(hass.Hass):
                             # we can only use a charging slot once, so remove it from the available list
                             availableChargeRates.remove(chargeRate)
                             solarChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
-                        
                         # We always remove the rate from the local array, otherwise we could end up trying 
                         # to add the same zero power rate again and again. We don't want to remove these rates
                         # from the availableChargeRates as we want these slots to be available outside this 
                         # function for other types of activity
                         availableChargeRatesLocal.remove(chargeRate)
-                    else:
+                    elif rateId == 1: # grid charge
                         chargeTaken = timeInSlot * self.batteryGridChargeRate
                         # we can only use a charging slot once, so remove it from the available list
                         availableImportRates.remove(chargeRate)
+                        availableImportRatesLocal.remove(chargeRate)
                         gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
+                    elif rateId == 2: # house on grid power
+                        chargeTaken = usage
+                        willCharge  = chargeTaken > 0
+                        if willCharge:
+                            # we can only use a charging slot once, so remove it from the available list
+                            availableHouseGridPowertRates.remove(chargeRate)
+                            houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
+                        # Same reason as above, always remove the local charge rate
+                        availableHouseGridPowertRatesLocal.remove(chargeRate)
 
                     if willCharge:
                         batteryRemaining = batteryRemaining + chargeTaken
@@ -539,29 +554,40 @@ class PowerControl(hass.Hass):
         # the cheapest slots we've got left.
         (batProfile, fullyCharged) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
         while not fullyCharged:
-            (chargeRate, isSolarRate) = self.chooseRate(availableChargeRatesLocal, availableImportRates)                
-            timeInSlot                = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
+            (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPowertRatesLocal)                
+            timeInSlot           = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
             if chargeRate:
-                willCharge = True
-                if isSolarRate:
+                # Only allow charging if there's room in the battery for this slot
+                willCharge = not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
+                if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
                     power     = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
                     # we can only add something to the charge plan if there's surplus solar and room in the 
                     # battery during that time slot
-                    willCharge = power > 0 and not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
+                    willCharge = willCharge and power > 0
                     if willCharge:
                         solarChargingPlan.append((chargeRate[0], chargeRate[1], min(power, maxCharge)))
                         # we can only use a charging slot once, so remove it from the available list            
                         availableChargeRates.remove(chargeRate)
-                    
                     # Same reason as above, always remove the local charge rate
                     availableChargeRatesLocal.remove(chargeRate)
-                else:
-                    chargeTaken = timeInSlot * self.batteryGridChargeRate
-                    # we can only use a charging slot once, so remove it from the available list
-                    availableImportRates.remove(chargeRate)
-                    gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
-
+                elif rateId == 1: # grid charge
+                    if willCharge:
+                        chargeTaken = timeInSlot * self.batteryGridChargeRate
+                        # we can only use a charging slot once, so remove it from the available list
+                        availableImportRates.remove(chargeRate)
+                        gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
+                    # Same reason as above, always remove the local charge rate
+                    availableImportRatesLocal.remove(chargeRate)
+                elif rateId == 2: # house on grid power
+                    if willCharge:
+                        usage = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1])
+                        # we can only use a charging slot once, so remove it from the available list
+                        availableHouseGridPowertRates.remove(chargeRate)
+                        houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], usage))
+                    # Same reason as above, always remove the local charge rate
+                    availableHouseGridPowertRatesLocal.remove(chargeRate)
+                    
                 if willCharge:
                     # Since the charge rates are already sorted in cost order, we know the current 
                     # one we're adding is always the most expensive one so far.
@@ -596,7 +622,6 @@ class PowerControl(hass.Hass):
         # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
         prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
         maxChargeCost     = newMaxChargeCost if solarChargingPlan else prevMaxChargeCost
-        
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
         while availableChargeRates:

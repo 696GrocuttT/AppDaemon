@@ -31,6 +31,7 @@ class PowerControl(hass.Hass):
         self.rawSolarData         = []
         self.solarChargingPlan    = []
         self.gridChargingPlan     = []
+        self.houseGridPoweredPlan = []
         self.standbyPlan          = []
         self.dischargePlan        = []
         self.dischargeToHousePlan = []
@@ -81,38 +82,42 @@ class PowerControl(hass.Hass):
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
         # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.
-        now             = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-        slotMidTime     = now + timedelta(minutes=15)
-        dischargeInfo   = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan),    None)
-        gridChargeInfo  = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.gridChargingPlan), None)
-        standbyInfo     = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.standbyPlan),      None)
-        modeInfo        = ("Discharge"    if dischargeInfo   else
-                           "Standby"      if standbyInfo     else 
-                           "Grid charge"  if gridChargeInfo  else "Solar charge")        
-        eddiInfo        = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan), None)
-        eddiInfo        = "on" if eddiInfo else "off"
+        now                  = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        slotMidTime          = now + timedelta(minutes=15)
+        dischargeInfo        = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan),        None)
+        gridChargeInfo       = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.gridChargingPlan),     None)
+        houseGridPowerdeInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.houseGridPoweredPlan), None)
+        standbyInfo          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.standbyPlan),          None)
+        modeInfo             = ("Discharge"          if dischargeInfo        else
+                                "Standby"            if standbyInfo          else 
+                                "Grid charge"        if gridChargeInfo       else 
+                                "House grid powered" if houseGridPowerdeInfo else "Solar charge")        
+        eddiInfo             = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.eddiPlan), None)
+        eddiInfo             = "on" if eddiInfo else "off"
         # generate a summary string for the combined plan
-        summary         = ( list(map(lambda x: ("D", x[0]), self.mergeSeries(self.dischargePlan)))     +
-                            list(map(lambda x: ("C", x[0]), self.mergeSeries(self.solarChargingPlan))) +
-                            list(map(lambda x: ("G", x[0]), self.mergeSeries(self.gridChargingPlan)))  +
-                            list(map(lambda x: ("S", x[0]), self.mergeSeries(self.standbyPlan)))       + 
-                            list(map(lambda x: ("H", x[0]), self.mergeSeries(self.dischargeToHousePlan))) )
+        summary              = ( list(map(lambda x: ("D", x[0]), self.mergeSeries(self.dischargePlan)))        +
+                                 list(map(lambda x: ("C", x[0]), self.mergeSeries(self.solarChargingPlan)))    +
+                                 list(map(lambda x: ("G", x[0]), self.mergeSeries(self.gridChargingPlan)))     +
+                                 list(map(lambda x: ("H", x[0]), self.mergeSeries(self.houseGridPoweredPlan))) +
+                                 list(map(lambda x: ("S", x[0]), self.mergeSeries(self.standbyPlan)))          +
+                                 list(map(lambda x: ("B", x[0]), self.mergeSeries(self.dischargeToHousePlan))) )
         summary.sort(key=lambda x: x[1])
-        summary         = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
-        summary         = ",".join(summary)
+        summary              = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
+        summary              = ",".join(summary)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)
-        self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":    self.planUpdateTime,
-                                                                                          "stateUpdateTime":   now,
-                                                                                          "dischargePlan":     self.seriesToString(self.dischargePlan,     mergeable=True),
-                                                                                          "solarChargingPlan": self.seriesToString(self.solarChargingPlan, mergeable=True),
-                                                                                          "gridChargingPlan":  self.seriesToString(self.gridChargingPlan,  mergeable=True),
-                                                                                          "standbyPlan":       self.seriesToString(self.standbyPlan,       mergeable=True),
-                                                                                          "tariff":            self.pwTariff,
-                                                                                          "defPrice":          self.defPrice})
-        self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":    self.planUpdateTime,
-                                                                                          "stateUpdateTime":   now,
-                                                                                          "plan":              self.seriesToString(self.eddiPlan, mergeable=True)})
+        self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":       self.planUpdateTime,
+                                                                                          "stateUpdateTime":      now,
+                                                                                          "dischargePlan":        self.seriesToString(self.dischargePlan,        mergeable=True),
+                                                                                          "solarChargingPlan":    self.seriesToString(self.solarChargingPlan,    mergeable=True),
+                                                                                          "gridChargingPlan":     self.seriesToString(self.gridChargingPlan,     mergeable=True),
+                                                                                          "houseGridPoweredPlan": self.seriesToString(self.houseGridPoweredPlan, mergeable=True),
+                                                                                          "standbyPlan":          self.seriesToString(self.standbyPlan,          mergeable=True),
+                                                                                          "tariff":               self.pwTariff,
+                                                                                          "defPrice":             self.defPrice})
+        self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":       self.planUpdateTime,
+                                                                                          "stateUpdateTime":      now,
+                                                                                          "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
 
 
     def gasRateChanged(self, entity, attribute, old, new, kwargs):
@@ -337,25 +342,27 @@ class PowerControl(hass.Hass):
         importRateData    = list(filter(lambda x: self.powerForPeriod(solarSurplus, x[0], x[1]) <= 0, importRateData))
         
         # calculate the charge plan, and work out what's left afterwards
-        (solarChargingPlan, 
-         gridChargingPlan, dischargePlan) = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar)
-        postBatteryChargeSurplus          = self.opOnSeries(solarSurplus, solarChargingPlan, lambda a, b: a-b)
+        (solarChargingPlan, gridChargingPlan, 
+         dischargePlan, houseGridPoweredPlan) = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar)
+        postBatteryChargeSurplus              = self.opOnSeries(solarSurplus, solarChargingPlan, lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
         # but we don't want to charge or discharge.
         standbyPlan = []
         for rate in exportRateData:
-            curSolarSurplus =  self.powerForPeriod(solarSurplus,      rate[0], rate[1])
-            isCharge        = (self.powerForPeriod(solarChargingPlan, rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(gridChargingPlan,  rate[0], rate[1]) > 0)
-            isDischarge     =  self.powerForPeriod(dischargePlan,     rate[0], rate[1]) > 0
-            if (curSolarSurplus > 0) and not (isCharge or isDischarge): 
+            curSolarSurplus =  self.powerForPeriod(solarSurplus,         rate[0], rate[1])
+            isPlanned       = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) > 0 or
+                               self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]) > 0 or
+                               self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]) > 0 or
+                               self.powerForPeriod(dischargePlan,        rate[0], rate[1]) > 0)
+            if (curSolarSurplus > 0) and not isPlanned: 
                 standbyPlan.append((rate[0], rate[1], curSolarSurplus))
         # Create a background plan for info only that shows when we're just powering the house from the battery.
         usageForRateSlotsOnly = self.opOnSeries(exportRateData, self.usageData, lambda a, b: b)
-        dischargeToHousePlan  = self.opOnSeries(usageForRateSlotsOnly, solarChargingPlan, lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  gridChargingPlan,  lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  standbyPlan,       lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  dischargePlan,     lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(usageForRateSlotsOnly, solarChargingPlan,    lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  gridChargingPlan,     lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  houseGridPoweredPlan, lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  standbyPlan,          lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  dischargePlan,        lambda a, b: 0 if b else a)
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
@@ -375,12 +382,14 @@ class PowerControl(hass.Hass):
         self.pwTariff         = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
         self.printSeries(solarChargingPlan,    "Solar charging plan",       mergeable=True)
         self.printSeries(gridChargingPlan,     "Grid charging plan",        mergeable=True)
+        self.printSeries(houseGridPoweredPlan, "House grid powered plan",   mergeable=True)
         self.printSeries(standbyPlan,          "Standby plan",              mergeable=True)
         self.printSeries(dischargePlan,        "Discharging plan",          mergeable=True)
         self.printSeries(dischargeToHousePlan, "Discharging to house plan", mergeable=True)
         self.printSeries(eddiPlan,             "Eddi plan",                 mergeable=True)
         self.solarChargingPlan    = solarChargingPlan
         self.gridChargingPlan     = gridChargingPlan
+        self.houseGridPoweredPlan = houseGridPoweredPlan
         self.standbyPlan          = standbyPlan
         self.dischargePlan        = dischargePlan
         self.dischargeToHousePlan = dischargeToHousePlan
@@ -443,7 +452,7 @@ class PowerControl(hass.Hass):
 
 
     def chooseRate(self, rateA, rateB, notAfterTime=None):
-        foundRate = None
+        foundRate = []
         isRateA   = None
         # if requested don't use any slots after the specified time
         if notAfterTime:
@@ -460,6 +469,14 @@ class PowerControl(hass.Hass):
             isRateA   = False
             foundRate = rateB[0]
         return (foundRate, isRateA)
+
+
+    def chooseRate3(self, rateA, rateB, rateC, notAfterTime=None):
+        (foundRate, isRateA)  = self.chooseRate(rateA,     rateB, notAfterTime)
+        (foundRate, isRateAB) = self.chooseRate(foundRate, rateC, notAfterTime)
+        rateId = (0 if isRateA  else
+                  1 if isRateAB else 2)
+        return (foundRate, rateId)
 
 
     def allocateChangingSlots(self, exportRateData, availableChargeRates, availableImportRates, availableHouseGridPowertRates, solarChargingPlan, 
@@ -625,6 +642,10 @@ class PowerControl(hass.Hass):
         gridChargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])
         houseGridPoweredPlan.sort(key=lambda x: x[0])
-        return (solarChargingPlan, gridChargingPlan, dischargePlan)
+        # When calculating the battery profile we allow the "house on frid power" and "grid charging" plans to
+        # overlap. However we need to remove this overlap before returning the plan to the caller.
+        houseGridPoweredPlan = self.opOnSeries(houseGridPoweredPlan, gridChargingPlan, lambda a, b: 0 if b else a)
+        houseGridPoweredPlan = list(filter(lambda x: x[2], houseGridPoweredPlan))
+        return (solarChargingPlan, gridChargingPlan, dischargePlan, houseGridPoweredPlan)
     
     

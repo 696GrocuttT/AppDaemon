@@ -481,11 +481,12 @@ class PowerControl(hass.Hass):
             batteryRemaining = batteryRemaining - usage + charge
             while batteryRemaining <= batReserveEnergy:
                 # We need to add a charging slot. This won't select any slots that are in the future
-                (chargeRate, isSolarRate) = self.chooseRate(availableChargeRatesLocal, availableImportRates, rate[0])                
+                (chargeRate, isSolarRate) = self.chooseRate(availableChargeRatesLocal, availableImportRates, rate[0])
+                timeInSlot                = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 if chargeRate:
                     willCharge = True
                     if isSolarRate:
-                        maxCharge  = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
+                        maxCharge  = timeInSlot * self.maxChargeRate
                         power      = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
                         # We only add a charging slot if there's solar surplus
                         willCharge = power > 0
@@ -501,7 +502,7 @@ class PowerControl(hass.Hass):
                         # function for other types of activity
                         availableChargeRatesLocal.remove(chargeRate)
                     else:
-                        chargeTaken = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.batteryGridChargeRate
+                        chargeTaken = timeInSlot * self.batteryGridChargeRate
                         # we can only use a charging slot once, so remove it from the available list
                         availableImportRates.remove(chargeRate)
                         gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
@@ -520,10 +521,11 @@ class PowerControl(hass.Hass):
         (batProfile, fullyCharged) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan)
         while not fullyCharged:
             (chargeRate, isSolarRate) = self.chooseRate(availableChargeRatesLocal, availableImportRates)                
+            timeInSlot                = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
             if chargeRate:
                 willCharge = True
                 if isSolarRate:
-                    maxCharge = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.maxChargeRate
+                    maxCharge = timeInSlot * self.maxChargeRate
                     power     = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
                     # we can only add something to the charge plan if there's surplus solar and room in the 
                     # battery during that time slot
@@ -536,7 +538,7 @@ class PowerControl(hass.Hass):
                     # Same reason as above, always remove the local charge rate
                     availableChargeRatesLocal.remove(chargeRate)
                 else:
-                    chargeTaken = ((chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)) * self.batteryGridChargeRate
+                    chargeTaken = timeInSlot * self.batteryGridChargeRate
                     # we can only use a charging slot once, so remove it from the available list
                     availableImportRates.remove(chargeRate)
                     gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))

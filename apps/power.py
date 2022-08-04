@@ -376,7 +376,15 @@ class PowerControl(hass.Hass):
         dischargePlanNextHour        = list(filter(lambda x: x[1] <= tariffEnd, dischargePlan))
         standbyPlanNextHour          = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
         houseGridPoweredPlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, houseGridPoweredPlan))
-        combinedPeakPlan             = sorted(dischargePlanNextHour + standbyPlanNextHour + houseGridPoweredPlanNextHour, key=lambda x: x[0])
+        # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 
+        # twisted logic to this. Firstly it doesn't actually matter as we set the powerwall to Self-powered 
+        # when we want to charge from solar, which doesn't use the tariff plan. The powerwall sometimes
+        # takes awhile to respond to tariff updates. This means that if the plan changes from change to 
+        # standby then we don't want this to impact the tariff plan we need (which could take awhile to
+        # update). To get round this we pre-emptivly set charging periods to peak in the tariff plan in 
+        # case we need to swap.
+        combinedPeakPlan             = sorted(dischargePlanNextHour        + standbyPlanNextHour + 
+                                              houseGridPoweredPlanNextHour + solarChargingPlan, key=lambda x: x[0])
         combinedPeakPlan             = self.mergeSeries(combinedPeakPlan)
         combinedPeakPeriods          = self.seriesToTariff(combinedPeakPlan, midnight)
         self.defPrice                = "0.10 0.10 OFF_PEAK"

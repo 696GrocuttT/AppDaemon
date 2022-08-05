@@ -290,7 +290,9 @@ class PowerControl(hass.Hass):
     def seriesToString(self, series, mergeable=False):
         if mergeable:
             series = self.mergeSeries(series)
-        if series and len(series[0]) > 3:
+        if series and len(series[0]) > 4:
+            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3} {4}".format(*x), series)
+        elif series and len(series[0]) > 3:
             strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3}".format(*x), series)
         else:
             strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
@@ -430,7 +432,9 @@ class PowerControl(hass.Hass):
     
     def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan):
         batForecast      = []            
+        batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
         batteryRemaining = self.batteryEnergy
+        emptyInAnySlot   = False
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(exportRateData):
             batteryRemaining = (batteryRemaining - 
@@ -439,9 +443,13 @@ class PowerControl(hass.Hass):
                                 self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]) + 
                                 self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]))
             fullyChanged = batteryRemaining >= self.batteryCapacity
+            empty        = batteryRemaining < batReserveEnergy
             if fullyChanged:
                 batteryRemaining = self.batteryCapacity
-            batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged))
+            if empty:
+                emptyInAnySlot   = True
+                batteryRemaining = batReserveEnergy
+            batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty))
            
         # We need to work out if the battery is fully charged in a time slot after 
         # miday on the last day of the forecast
@@ -458,7 +466,7 @@ class PowerControl(hass.Hass):
             soc = (self.batteryEnergy / self.batteryCapacity) * 100
             if soc > 99 and now >= lastMidday:
                 fullChargeAfterMidday = True
-        return (batForecast, fullChargeAfterMidday)
+        return (batForecast, fullChargeAfterMidday, emptyInAnySlot)
 
 
     def chooseRate(self, rateA, rateB, notAfterTime=None):
@@ -499,73 +507,22 @@ class PowerControl(hass.Hass):
         availableChargeRatesLocal          = list(availableChargeRates)
         availableImportRatesLocal          = list(availableImportRates)
         availableHouseGridPowertRatesLocal = list(availableHouseGridPowertRates)
-        # Walk through the time slots (using the rates as a base timeline) predicting the battery 
-        # capacity at the end of each time slot. If we get below the reserve level, add the cheapest 
-        # previous rate to the charge plan. This Section basically makes sure we don't flatten the 
-        # battery. It doesn't make sure we charge the battery, that comes later.
-        batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
-        batteryRemaining = self.batteryEnergy
-        maxChargeCost    = 0
-        for rate in exportRateData:
-            # Have we got enough energy for this time slot
-            usage            =  self.powerForPeriod(usageAfterSolar,      rate[0], rate[1])
-            charge           = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) +
-                                self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]) +
-                                self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]))
-            batteryRemaining = batteryRemaining - usage + charge
-            while batteryRemaining <= batReserveEnergy:
-                # We need to add a charging slot. This won't select any slots that are in the future
-                (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPowertRatesLocal, rate[0])
-                timeInSlot           = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
-                if chargeRate:
-                    willCharge = True
-                    if rateId == 0: # solar
-                        maxCharge  = timeInSlot * self.maxChargeRate
-                        power      = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
-                        # We only add a charging slot if there's solar surplus
-                        willCharge = power > 0
-                        if willCharge:
-                            chargeTaken = min(power, maxCharge)
-                            # we can only use a charging slot once, so remove it from the available list
-                            availableChargeRates.remove(chargeRate)
-                            solarChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
-                        # We always remove the rate from the local array, otherwise we could end up trying 
-                        # to add the same zero power rate again and again. We don't want to remove these rates
-                        # from the availableChargeRates as we want these slots to be available outside this 
-                        # function for other types of activity
-                        availableChargeRatesLocal.remove(chargeRate)
-                    elif rateId == 1: # grid charge
-                        chargeTaken = timeInSlot * self.batteryGridChargeRate
-                        # we can only use a charging slot once, so remove it from the available list
-                        availableImportRates.remove(chargeRate)
-                        availableImportRatesLocal.remove(chargeRate)
-                        gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
-                    elif rateId == 2: # house on grid power
-                        chargeTaken = usage
-                        willCharge  = chargeTaken > 0
-                        if willCharge:
-                            # we can only use a charging slot once, so remove it from the available list
-                            availableHouseGridPowertRates.remove(chargeRate)
-                            houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
-                        # Same reason as above, always remove the local charge rate
-                        availableHouseGridPowertRatesLocal.remove(chargeRate)
-
-                    if willCharge:
-                        batteryRemaining = batteryRemaining + chargeTaken
-                        # Since the charge rates are already sorted in cost order, we know the current 
-                        # one we're adding is always the most expensive one so far.
-                        maxChargeCost = chargeRate[2]
-                else:
-                    # no available slots
-                    break
-
-        # Now we have a minimum charging plan that'll mean we don't run out, top up the battery with 
-        # the cheapest slots we've got left.
-        (batProfile, fullyCharged) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
+        # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
+        maxChargeCost                      = 0
+        (batProfile, fullyCharged, empty)  = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
+        # initialise the allow empty before variable to the start of the profile so it has no effect to start with
+        allowEmptyBefore                   = batProfile[0][0]
         while not fullyCharged:
-            (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPowertRatesLocal)                
-            timeInSlot           = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
+            # If the battery has gone flat during at any point, make sure the charging slot we search for is before the point it went flat
+            chargeBefore = None
+            if empty:
+                firstEmptySlot = next(filter(lambda x: x[4] and x[0] >= allowEmptyBefore, batProfile), None)
+                if firstEmptySlot:
+                    chargeBefore = firstEmptySlot[1]
+            # Search for a charging slot
+            (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPowertRatesLocal, chargeBefore)                
             if chargeRate:
+                timeInSlot = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 # Only allow charging if there's room in the battery for this slot
                 willCharge = not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
                 if rateId == 0: # solar
@@ -578,7 +535,10 @@ class PowerControl(hass.Hass):
                         solarChargingPlan.append((chargeRate[0], chargeRate[1], min(power, maxCharge)))
                         # we can only use a charging slot once, so remove it from the available list            
                         availableChargeRates.remove(chargeRate)
-                    # Same reason as above, always remove the local charge rate
+                    # We always remove the rate from the local array, otherwise we could end up trying 
+                    # to add the same zero power rate again and again. We don't want to remove these rates
+                    # from the availableChargeRates as we want these slots to be available outside this 
+                    # function for other types of activity
                     availableChargeRatesLocal.remove(chargeRate)
                 elif rateId == 1: # grid charge
                     if willCharge:
@@ -602,7 +562,13 @@ class PowerControl(hass.Hass):
                     # one we're adding is always the most expensive one so far.
                     maxChargeCost = chargeRate[2]
                     # update the battery profile based on the new charging plan
-                    (batProfile, fullyCharged) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)   
+                    (batProfile, fullyCharged, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)   
+            elif chargeBefore:
+                # If the battery gets empty then the code above we restrict the search for a charging 
+                # slot to the time before it gets empty. This can result in not finding a charge slot. 
+                # In this case we don't terminate the search we just allow the battery to be empty for 
+                # that slot and try again to change during a later slot.
+                allowEmptyBefore = chargeBefore
             else:
                 break
         return (batProfile, fullyCharged, maxChargeCost)

@@ -436,6 +436,7 @@ class PowerControl(hass.Hass):
         batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
         batteryRemaining = self.batteryEnergy
         emptyInAnySlot   = False
+        fullInAnySlot    = False
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(exportRateData):
             batteryRemaining = (batteryRemaining - 
@@ -446,12 +447,17 @@ class PowerControl(hass.Hass):
             fullyChanged = batteryRemaining >= self.batteryCapacity
             empty        = batteryRemaining <= batReserveEnergy
             if fullyChanged:
+                fullInAnySlot    = True
                 batteryRemaining = self.batteryCapacity
             if empty:
                 emptyInAnySlot   = True
                 batteryRemaining = batReserveEnergy
             batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty))
            
+        # calculate the end time of the last fully charged slot
+        lastFullSlotEndTime = None
+        if fullInAnySlot:
+            lastFullSlotEndTime = next(filter(lambda x: x[3], reversed(batForecast)))[1]
         # We need to work out if the battery is fully charged in a time slot after 
         # miday on the last day of the forecast
         lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
@@ -467,7 +473,7 @@ class PowerControl(hass.Hass):
             soc = (self.batteryEnergy / self.batteryCapacity) * 100
             if soc > 99 and now >= lastMidday:
                 fullChargeAfterMidday = True
-        return (batForecast, fullChargeAfterMidday, emptyInAnySlot)
+        return (batForecast, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
 
 
     def chooseRate(self, rateA, rateB, notAfterTime=None):
@@ -510,7 +516,8 @@ class PowerControl(hass.Hass):
         availableHouseGridPowertRatesLocal = list(availableHouseGridPowertRates)
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         maxChargeCost                      = 0
-        (batProfile, fullyCharged, empty)  = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
+        (batProfile, fullyCharged, 
+         lastFullSlotEndTime, empty)       = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
         # initialise the allow empty before variable to the start of the profile so it has no effect to start with
         allowEmptyBefore                   = batProfile[0][0]
         while empty or not fullyCharged:
@@ -526,6 +533,11 @@ class PowerControl(hass.Hass):
                 timeInSlot = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 # Only allow charging if there's room in the battery for this slot
                 willCharge = not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
+                # Don't add any charging slots that are before the last fully charged slot, as it won't help
+                # get the battery to fully change at our target time, and it just fills the battery with more 
+                # expensive electricity when there's cheaper electriticy available later.
+                if lastFullSlotEndTime:
+                    willCharge = willCharge and chargeRate[1] >= lastFullSlotEndTime
                 if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
                     power     = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
@@ -577,7 +589,8 @@ class PowerControl(hass.Hass):
                     # one we're adding is always the most expensive one so far.
                     maxChargeCost = chargeRate[2]
                     # update the battery profile based on the new charging plan
-                    (batProfile, fullyCharged, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)   
+                    (batProfile, fullyCharged, 
+                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)   
             elif chargeBefore:
                 # If the battery gets empty then the code above we restrict the search for a charging 
                 # slot to the time before it gets empty. This can result in not finding a charge slot. 

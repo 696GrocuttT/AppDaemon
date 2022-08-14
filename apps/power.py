@@ -18,6 +18,7 @@ class PowerControl(hass.Hass):
         self.maxChargeRate                = float(self.args['batteryChargeRateLimit'])
         self.batteryGridChargeRate        = float(self.args['batteryGridChargeRate'])
         self.batReservePct                = float(self.args['batteryReservePercentage'])
+        self.batFullPct                   = float(self.args['batteryFullPercentage'])
         self.gasEfficiency                = float(self.args['gasHotWaterEfficiency'])
         self.eddiTargetPower              = float(self.args['eddiTargetPower'])
         self.eddiPowerLimit               = float(self.args['eddiPowerLimit'])
@@ -432,8 +433,13 @@ class PowerControl(hass.Hass):
     
     
     def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan):
-        batForecast      = []            
+        batForecast      = []
+        # For full charge detection we compare against 99% full, this is so any minor changes 
+        # is battery capacity or energe when we're basically fully charged, and won't charge 
+        # any more, don't cause any problems.
+        batFullPct       = min(self.batFullPct, 99)
         batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
+        batFullEnergy    = self.batteryCapacity * (self.batFullPct    / 100)
         batteryRemaining = self.batteryEnergy
         emptyInAnySlot   = False
         fullInAnySlot    = False
@@ -461,17 +467,13 @@ class PowerControl(hass.Hass):
         # We need to work out if the battery is fully charged in a time slot after 
         # miday on the last day of the forecast
         lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
-        fullChargeAfterMidday = any(x[0] >= lastMidday and x[3] for x in batForecast)
+        fullChargeAfterMidday = any(x[0] >= lastMidday and x[2] >= batFullEnergy for x in batForecast)
         # We also indicate the battery is fully charged if its after midday now, and its currently 
         # fully charged. This prevents an issue where the current time slot is never allowed to 
         # discharge if we don't have a charging period for tomorrow mapped out already
         if not fullChargeAfterMidday:
             now = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
-            # For full charge detection we compare against 99% full, this is so any minor changes 
-            # is battery capacity or energe when we're basically fully charged, and won't charge 
-            # any more, don't cause any problems.
-            soc = (self.batteryEnergy / self.batteryCapacity) * 100
-            if soc > 99 and now >= lastMidday:
+            if self.batteryEnergy > batFullEnergy and now >= lastMidday:
                 fullChargeAfterMidday = True
         return (batForecast, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
 
@@ -665,6 +667,7 @@ class PowerControl(hass.Hass):
         self.set_state(self.prevMaxChargeCostEntity, state=maxChargeCost)
         soc = (self.batteryEnergy / self.batteryCapacity) * 100
         self.log("Current battery change {0:.3f}".format(soc))
+        self.log("Battery change cost {0:.2f}".format(maxChargeCost))
         self.printSeries(batProfile, "Battery profile")
         solarChargingPlan.sort(key=lambda x: x[0])
         gridChargingPlan.sort(key=lambda x: x[0])

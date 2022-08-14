@@ -624,7 +624,7 @@ class PowerControl(hass.Hass):
                                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar)
         # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
         prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
-        maxChargeCost     = newMaxChargeCost if solarChargingPlan else prevMaxChargeCost
+        maxChargeCost     = newMaxChargeCost if solarChargingPlan or gridChargingPlan else prevMaxChargeCost
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
         while availableChargeRates:

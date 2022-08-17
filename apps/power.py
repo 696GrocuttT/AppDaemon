@@ -25,6 +25,7 @@ class PowerControl(hass.Hass):
         self.minBuySelMargin              = float(self.args['minBuySelMargin'])
         self.minBuyUseMargin              = float(self.args['minBuyUseMargin'])
         self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
+        self.batFullPctHysteresis         = 2
         
         self.solarData            = []
         self.exportRateData       = []
@@ -439,19 +440,20 @@ class PowerControl(hass.Hass):
         # any more, don't cause any problems.
         batFullPct       = min(self.batFullPct, 99)
         batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
-        batFullEnergy    = self.batteryCapacity * (self.batFullPct    / 100)
         batteryRemaining = self.batteryEnergy
         emptyInAnySlot   = False
         fullInAnySlot    = False
+        totChargeEnerge  = 0.0
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(exportRateData):
-            batteryRemaining = (batteryRemaining - 
+            chargeEnergy     = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) + 
+                                self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]))
+            batteryRemaining = (batteryRemaining + chargeEnergy - 
                                 self.powerForPeriod(usageAfterSolar,      rate[0], rate[1]) + 
-                                self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) + 
-                                self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]) + 
                                 self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]))
-            fullyChanged = batteryRemaining >= self.batteryCapacity
-            empty        = batteryRemaining <= batReserveEnergy
+            totChargeEnerge  = totChargeEnerge + chargeEnergy
+            fullyChanged     = batteryRemaining >= self.batteryCapacity
+            empty            = batteryRemaining <= batReserveEnergy
             if fullyChanged:
                 fullInAnySlot    = True
                 batteryRemaining = self.batteryCapacity
@@ -464,8 +466,15 @@ class PowerControl(hass.Hass):
         lastFullSlotEndTime = None
         if fullInAnySlot:
             lastFullSlotEndTime = next(filter(lambda x: x[3], reversed(batForecast)))[1]
-        # We need to work out if the battery is fully charged in a time slot after 
-        # miday on the last day of the forecast
+        # We need to work out if the battery is fully charged in a time slot after miday on the
+        # last day of the forecast. When calculating the battery full energy we add a bit of
+        # hysteresis based on whether there are any charge slots in the current plan before midday. 
+        # This effectily means that we aim to charge to a slightly higher value and when we
+        # discharge we'll only add extra charge slots if we go below a slightly lower value. The 
+        # aim of this is to prevent slight changes in usage etc from suddenly causing an extra high
+        # cost charging slot to be added at the last minute.
+        hysteresis            = self.batFullPctHysteresis if totChargeEnerge else -self.batFullPctHysteresis
+        batFullEnergy         = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
         lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
         fullChargeAfterMidday = any(x[0] >= lastMidday and x[2] >= batFullEnergy for x in batForecast)
         # We also indicate the battery is fully charged if its after midday now, and its currently 

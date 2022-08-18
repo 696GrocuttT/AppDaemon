@@ -72,8 +72,9 @@ class PowerControl(hass.Hass):
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
         # Schedule an the output update of the 30 mintues, on the half hour boundary
-        now       = datetime.now() 
-        startTime = now.replace(minute=0, second=0, microsecond=0) 
+        batOutputTimeOffset = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
+        now                 = datetime.now() 
+        startTime           = now.replace(minute=0, second=0, microsecond=0) + batOutputTimeOffset
         while startTime < now:
             startTime = startTime + timedelta(minutes=30)
         self.run_every(self.updateOutputs, startTime, 30*60)

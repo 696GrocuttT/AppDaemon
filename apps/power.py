@@ -14,6 +14,7 @@ class PowerControl(hass.Hass):
         self.eddiOutputEntityName         = self.args['eddiOutputEntity']
         self.batteryModeOutputEntityName  = self.args['batteryModeOutputEntity']
         self.batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
+        self.batOutputTimeOffset          = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
         self.usageMargin                  = float(self.args['houseLoadMargin'])
         self.maxChargeRate                = float(self.args['batteryChargeRateLimit'])
         self.batteryGridChargeRate        = float(self.args['batteryGridChargeRate'])
@@ -72,9 +73,8 @@ class PowerControl(hass.Hass):
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
         # Schedule an the output update of the 30 mintues, on the half hour boundary
-        batOutputTimeOffset = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
-        now                 = datetime.now() 
-        startTime           = now.replace(minute=0, second=0, microsecond=0) + batOutputTimeOffset
+        now       = datetime.now() 
+        startTime = now.replace(minute=0, second=0, microsecond=0) + self.batOutputTimeOffset
         while startTime < now:
             startTime = startTime + timedelta(minutes=30)
         self.run_every(self.updateOutputs, startTime, 30*60)
@@ -82,11 +82,12 @@ class PowerControl(hass.Hass):
 
     def updateOutputs(self, kwargs):
         self.log("Updating outputs")
-        self.mergeAndProcessData()
+        # Adjust for the time offset that was applied when this function was scheduled.
+        now                  = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo) - self.batOutputTimeOffset
+        self.mergeAndProcessData(now)
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
         # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.
-        now                  = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
         slotMidTime          = now + timedelta(minutes=15)
         dischargeInfo        = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan),        None)
         gridChargeInfo       = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.gridChargingPlan),     None)
@@ -322,7 +323,7 @@ class PowerControl(hass.Hass):
         return list(filter(lambda x: x[0] < secondsInADay, tariff))
 
 
-    def mergeAndProcessData(self):
+    def mergeAndProcessData(self, now):
         self.log("Updating schedule")        
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 
@@ -332,7 +333,6 @@ class PowerControl(hass.Hass):
         usageAfterSolar = self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b))
         
         # Remove rates that are in the past
-        now               = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
         exportRateData    = list(filter(lambda x: x[1] >= now, self.exportRateData))
         importRateData    = list(filter(lambda x: x[1] >= now, self.importRateData))
         # remove any import rate data that is outside the time range for the export rates and vice 
@@ -349,7 +349,7 @@ class PowerControl(hass.Hass):
         
         # calculate the charge plan, and work out what's left afterwards
         (solarChargingPlan, gridChargingPlan, 
-         dischargePlan, houseGridPoweredPlan) = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar)
+         dischargePlan, houseGridPoweredPlan) = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now)
         postBatteryChargeSurplus              = self.opOnSeries(solarSurplus, solarChargingPlan, lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
         # but we don't want to charge or discharge.
@@ -434,7 +434,7 @@ class PowerControl(hass.Hass):
         return eddiPlan
     
     
-    def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan):
+    def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now):
         batForecast      = []
         # For full charge detection we compare against 99% full, this is so any minor changes 
         # is battery capacity or energe when we're basically fully charged, and won't charge 
@@ -482,7 +482,6 @@ class PowerControl(hass.Hass):
         # fully charged. This prevents an issue where the current time slot is never allowed to 
         # discharge if we don't have a charging period for tomorrow mapped out already
         if not fullChargeAfterMidday:
-            now = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
             if self.batteryEnergy > batFullEnergy and now >= lastMidday:
                 fullChargeAfterMidday = True
         return (batForecast, lastMidday, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
@@ -518,7 +517,7 @@ class PowerControl(hass.Hass):
 
 
     def allocateChangingSlots(self, exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates, solarChargingPlan, 
-                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar):
+                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now):
         # We create a local copy of the available rates as there some cases (if there's no solar
         # surplus) where we don't want to remove an entry from the availableChargeRates array, 
         # but we need to remove it locally so we can keep track of which items we've used, and 
@@ -530,7 +529,7 @@ class PowerControl(hass.Hass):
         maxChargeCost                       = 0
         (batProfile, fullEndTimeThresh,
          fullyCharged, lastFullSlotEndTime, 
-         empty)                             = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)
+         empty)                             = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)
         # initialise the allow empty before variable to the start of the profile so it has no effect to start with
         allowEmptyBefore                    = batProfile[0][0]
         while empty or not fullyCharged:
@@ -609,7 +608,7 @@ class PowerControl(hass.Hass):
                     maxChargeCost = chargeRate[2]
                     # update the battery profile based on the new charging plan
                     (batProfile, _, fullyCharged, 
-                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan)   
+                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)   
             elif firstEmptySlot:
                 # If the battery gets empty then the code above we restrict the search for a charging 
                 # slot to the time before it gets empty. This can result in not finding a charge slot. 
@@ -621,7 +620,7 @@ class PowerControl(hass.Hass):
         return (batProfile, fullyCharged, empty, maxChargeCost)
 
     
-    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar):        
+    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now):        
         solarChargingPlan    = []
         gridChargingPlan     = []
         dischargePlan        = []
@@ -640,7 +639,7 @@ class PowerControl(hass.Hass):
 
         # calculate the initial charging profile
         (batProfile, _, _, newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
-                                                                          solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar)
+                                                                          solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now)
         # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
         prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
         maxChargeCost     = newMaxChargeCost if solarChargingPlan or gridChargingPlan else prevMaxChargeCost
@@ -666,7 +665,7 @@ class PowerControl(hass.Hass):
                 newHouseGridPoweredPlan           = list(filter(lambda x: x[0] != newDischargeSlot[0], houseGridPoweredPlan))
                 (batProfile, fullyCharged, 
                  empty, newMaxChargeCost)         = self.allocateChangingSlots(exportRateData, newAvailableChargeRates, newAvailableImportRates, newAvailableHouseGridPoweredRates, 
-                                                                               newSolarChargingPlan, newGridChargingPlan, newHouseGridPoweredPlan, newSolarSurplus, newUsageAfterSolar)    
+                                                                               newSolarChargingPlan, newGridChargingPlan, newHouseGridPoweredPlan, newSolarSurplus, newUsageAfterSolar, now)    
                 newMaxChargeCost                  = max(maxChargeCost, newMaxChargeCost)
                 # If we're still fully charged after swapping a slot to discharging, then make that the plan 
                 # of record by updating the arrays. We also skip a potential discharge period if the 

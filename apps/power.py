@@ -26,7 +26,7 @@ class PowerControl(hass.Hass):
         self.minBuySelMargin              = float(self.args['minBuySelMargin'])
         self.minBuyUseMargin              = float(self.args['minBuyUseMargin'])
         self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
-        self.batFullPctHysteresis         = 2
+        self.batFullPctHysteresis         = 3
         
         self.solarData            = []
         self.exportRateData       = []
@@ -467,24 +467,27 @@ class PowerControl(hass.Hass):
         lastFullSlotEndTime = None
         if fullInAnySlot:
             lastFullSlotEndTime = next(filter(lambda x: x[3], reversed(batForecast)))[1]
-        # We need to work out if the battery is fully charged in a time slot after miday on the
+        # We need to work out if the battery is fully charged in a time slot after 4pm on the
         # last day of the forecast. When calculating the battery full energy we add a bit of
         # hysteresis based on whether there are any charge slots in the current plan before midday. 
         # This effectily means that we aim to charge to a slightly higher value and when we
         # discharge we'll only add extra charge slots if we go below a slightly lower value. The 
         # aim of this is to prevent slight changes in usage etc from suddenly causing an extra high
         # cost charging slot to be added at the last minute.
+        # NOTE: We pick a target full time of 4pm as this is when we get the next days price info. 
+        #       So making sure we're in a reasonable state of charge before we know how bad/good the 
+        #       next day is going to be.
         hysteresis            = self.batFullPctHysteresis if totChargeEnerge else -self.batFullPctHysteresis
         batFullEnergy         = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
-        lastMidday            = batForecast[-1][0].replace(hour=12, minute=0, second=0, microsecond=0)
-        fullChargeAfterMidday = any(x[0] >= lastMidday and x[2] >= batFullEnergy for x in batForecast)
+        lastTargetFullTime    = batForecast[-1][0].replace(hour=16, minute=0, second=0, microsecond=0)
+        fullChargeAfterMidday = any(x[0] >= lastTargetFullTime and x[2] >= batFullEnergy for x in batForecast)
         # We also indicate the battery is fully charged if its after midday now, and its currently 
         # fully charged. This prevents an issue where the current time slot is never allowed to 
         # discharge if we don't have a charging period for tomorrow mapped out already
         if not fullChargeAfterMidday:
-            if self.batteryEnergy > batFullEnergy and now >= lastMidday:
+            if self.batteryEnergy > batFullEnergy and now >= lastTargetFullTime:
                 fullChargeAfterMidday = True
-        return (batForecast, lastMidday, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
+        return (batForecast, lastTargetFullTime, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
 
 
     def chooseRate(self, rateA, rateB, notAfterTime=None):

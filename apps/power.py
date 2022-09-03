@@ -474,12 +474,12 @@ class PowerControl(hass.Hass):
         # discharge we'll only add extra charge slots if we go below a slightly lower value. The 
         # aim of this is to prevent slight changes in usage etc from suddenly causing an extra high
         # cost charging slot to be added at the last minute.
-        # NOTE: We pick a target full time of 4pm as this is when we get the next days price info. 
+        # NOTE: We pick a target full time of 4:30pm as this is after we get the next days price info. 
         #       So making sure we're in a reasonable state of charge before we know how bad/good the 
         #       next day is going to be.
         hysteresis                = self.batFullPctHysteresis if totChargeEnerge else -self.batFullPctHysteresis
         batFullEnergy             = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
-        lastTargetFullTime        = batForecast[-1][0].replace(hour=16, minute=0, second=0, microsecond=0)
+        lastTargetFullTime        = batForecast[-1][0].replace(hour=16, minute=30, second=0, microsecond=0)
         fullChargeAfterTargetTime = any(x[0] >= lastTargetFullTime and x[2] >= batFullEnergy for x in batForecast)
         # We also indicate the battery is fully charged if its after midday now, and its currently 
         # fully charged. This prevents an issue where the current time slot is never allowed to 

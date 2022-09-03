@@ -477,17 +477,17 @@ class PowerControl(hass.Hass):
         # NOTE: We pick a target full time of 4pm as this is when we get the next days price info. 
         #       So making sure we're in a reasonable state of charge before we know how bad/good the 
         #       next day is going to be.
-        hysteresis            = self.batFullPctHysteresis if totChargeEnerge else -self.batFullPctHysteresis
-        batFullEnergy         = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
-        lastTargetFullTime    = batForecast[-1][0].replace(hour=16, minute=0, second=0, microsecond=0)
-        fullChargeAfterMidday = any(x[0] >= lastTargetFullTime and x[2] >= batFullEnergy for x in batForecast)
+        hysteresis                = self.batFullPctHysteresis if totChargeEnerge else -self.batFullPctHysteresis
+        batFullEnergy             = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
+        lastTargetFullTime        = batForecast[-1][0].replace(hour=16, minute=0, second=0, microsecond=0)
+        fullChargeAfterTargetTime = any(x[0] >= lastTargetFullTime and x[2] >= batFullEnergy for x in batForecast)
         # We also indicate the battery is fully charged if its after midday now, and its currently 
         # fully charged. This prevents an issue where the current time slot is never allowed to 
         # discharge if we don't have a charging period for tomorrow mapped out already
-        if not fullChargeAfterMidday:
+        if not fullChargeAfterTargetTime:
             if self.batteryEnergy > batFullEnergy and now >= lastTargetFullTime:
-                fullChargeAfterMidday = True
-        return (batForecast, lastTargetFullTime, fullChargeAfterMidday, lastFullSlotEndTime, emptyInAnySlot)
+                fullChargeAfterTargetTime = True
+        return (batForecast, lastTargetFullTime, fullChargeAfterTargetTime, lastFullSlotEndTime, emptyInAnySlot)
 
 
     def chooseRate(self, rateA, rateB, notAfterTime=None):
@@ -623,7 +623,27 @@ class PowerControl(hass.Hass):
         return (batProfile, fullyCharged, empty, maxChargeCost)
 
     
-    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now):        
+    def houseRateForPeriod(self, startTime, endTime, exportRateData, importRateData, solarSurplus):
+        surplus = self.powerForPeriod(solarSurplus, startTime, endTime)
+        if surplus > 0:
+            rate = next(filter(lambda x: x[0] == startTime, exportRateData), None)
+        else:
+            rate = next(filter(lambda x: x[0] == startTime, importRateData), None)
+        return rate
+
+
+    def maxHouseRateForEmpty(self, batProfile, exportRateData, importRateData, solarSurplus):
+        maxRate = None
+        for batEntry in filter(lambda x: x[4], batProfile):
+            curRate = self.houseRateForPeriod(batEntry[0], batEntry[1], exportRateData, importRateData, solarSurplus)
+            if maxRate == None:
+                maxRate = curRate[2]
+            else:
+                maxRate = max(maxRate, curRate[2])
+        return maxRate
+
+    
+    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now):
         solarChargingPlan    = []
         gridChargingPlan     = []
         dischargePlan        = []
@@ -674,7 +694,11 @@ class PowerControl(hass.Hass):
                 # of record by updating the arrays. We also skip a potential discharge period if the 
                 # difference between the cost of the charge / discharge periods isn't greater than the 
                 # threshold. This reduces battery cycling if there's not much to be gained from it.
-                if fullyCharged and not empty and mostExpenciveRate[2] - newMaxChargeCost > self.minBuySelMargin:
+                newMaxCostRate          = newMaxChargeCost
+                newMaxHouseRateForEmpty = self.maxHouseRateForEmpty(batProfile, exportRateData, importRateData, solarSurplus)
+                if newMaxHouseRateForEmpty != None:
+                    newMaxCostRate = max(newMaxChargeCost, newMaxHouseRateForEmpty)
+                if fullyCharged and mostExpenciveRate[2] - newMaxCostRate > self.minBuySelMargin:
                     maxChargeCost                  = newMaxChargeCost
                     dischargePlan.append(newDischargeSlot)
                     solarSurplus                   = newSolarSurplus         

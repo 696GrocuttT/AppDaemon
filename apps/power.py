@@ -676,10 +676,19 @@ class PowerControl(hass.Hass):
         # powering the house
         availableHouseGridPoweredRates = [(x[0], x[1], x[2] * 0.9) for x in availableImportRates]
 
+        # We don't want to discharge the battery for any slots where the cost of running the house off 
+        # the grid is lower than what we've previously paid to charge the battery. So add any grid 
+        # powered rates that are below the current charge cost
+        maxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
+        for rate in list(filter(lambda x: x[2] <= maxChargeCost, availableHouseGridPoweredRates)):
+            availableHouseGridPoweredRates.remove(rate)
+            usage = self.powerForPeriod(usageAfterSolar, rate[0], rate[1])
+            houseGridPoweredPlan.append((rate[0], rate[1], usage))
+
         # calculate the initial charging profile
         (batProfile, _, _, newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
                                                                           solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now)
-        maxChargeCost                        = max(newMaxChargeCost, float(self.get_state(self.prevMaxChargeCostEntity)))
+        maxChargeCost                        = max(newMaxChargeCost, maxChargeCost)
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
         while availableChargeRates:

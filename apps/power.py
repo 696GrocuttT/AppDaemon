@@ -111,9 +111,10 @@ class PowerControl(hass.Hass):
         summary              = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
         summary              = ",".join(summary)
 
-        # Update the prev max charge cost. We do this by resetting it aronud midnight, and 
-        # updating if if we're starting a charging slot.
-        if (now.hour == 0 and now.minute < 15) or (now.hour == 23 and now.minute > 45):
+        # Update the prev max charge cost. We do this by resetting it aronud 4:30pm (when 
+        # we've got the rate data for the next day), and updating if if we're starting a 
+        # charging slot.
+        if now.hour == 16 and now.minute > 15 and now.minute < 45:
             prevMaxChargeCost = 0
         else:
             prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))

@@ -92,6 +92,7 @@ class PowerControl(hass.Hass):
         dischargeInfo        = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.dischargePlan),        None)
         gridChargeInfo       = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.gridChargingPlan),     None)
         houseGridPowerdeInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.houseGridPoweredPlan), None)
+        solarChargeInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.solarChargingPlan),    None)
         standbyInfo          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.standbyPlan),          None)
         modeInfo             = ("Discharge"          if dischargeInfo        else
                                 "Standby"            if standbyInfo          else 
@@ -109,6 +110,20 @@ class PowerControl(hass.Hass):
         summary.sort(key=lambda x: x[1])
         summary              = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
         summary              = ",".join(summary)
+
+        # Update the prev max charge cost. We do this by resetting it aronud midnight, and 
+        # updating if if we're starting a charging slot.
+        if (now.hour == 0 and now.minute < 15) or (now.hour == 23 and now.minute > 45):
+            prevMaxChargeCost = 0
+        else:
+            prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
+        if solarChargeInfo:
+            curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.exportRateData), 0)
+            prevMaxChargeCost = max(prevMaxChargeCost, curRrate)
+        elif gridChargeInfo:
+            curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.importRateData), 0)
+            prevMaxChargeCost = max(prevMaxChargeCost, curRrate)
+        self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":       self.planUpdateTime,
@@ -663,9 +678,7 @@ class PowerControl(hass.Hass):
         # calculate the initial charging profile
         (batProfile, _, _, newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
                                                                           solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now)
-        # If we're haven't needed to use any charging slots, then use the previous value for the charging cost
-        prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
-        maxChargeCost     = newMaxChargeCost if solarChargingPlan or gridChargingPlan else prevMaxChargeCost
+        maxChargeCost                        = max(newMaxChargeCost, float(self.get_state(self.prevMaxChargeCostEntity)))
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged
         while availableChargeRates:
@@ -710,8 +723,6 @@ class PowerControl(hass.Hass):
                     houseGridPoweredPlan           = newHouseGridPoweredPlan
                     availableHouseGridPoweredRates = newAvailableHouseGridPoweredRates
 
-        # Update the cost of charging so we have an accurate number next time around
-        self.set_state(self.prevMaxChargeCostEntity, state=maxChargeCost)
         soc = (self.batteryEnergy / self.batteryCapacity) * 100
         self.log("Current battery change {0:.3f}".format(soc))
         self.log("Battery change cost {0:.2f}".format(maxChargeCost))

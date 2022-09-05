@@ -120,10 +120,10 @@ class PowerControl(hass.Hass):
             prevMaxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
         if solarChargeInfo:
             curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.exportRateData), 0)
-            prevMaxChargeCost = max(prevMaxChargeCost, curRrate)
+            prevMaxChargeCost = max(prevMaxChargeCost, curRrate[2])
         elif gridChargeInfo:
             curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.importRateData), 0)
-            prevMaxChargeCost = max(prevMaxChargeCost, curRrate)
+            prevMaxChargeCost = max(prevMaxChargeCost, curRrate[2])
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)

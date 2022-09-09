@@ -15,8 +15,9 @@ class SystemMonitor(hass.Hass):
 
         # Go through the list of entity types to listen for, setting up the listeners and 
         # the data structures to go with them
-        self.alertLevel = 0
-        self.monList    = []
+        self.alertLevel        = 0
+        self.prevAlertTheshold = 0
+        self.monList           = []
         for monEntity in monEntities:
             attribCond       = monEntity.get('attributeCond', {})
             attribName       = monEntity.get('attributeName', None)
@@ -83,8 +84,13 @@ class SystemMonitor(hass.Hass):
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
         self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
         if self.alertEntity:
-            alert = curAlertLevel > 5
-            if (curAlertLevel > self.alertLevel) or not alert:
+            now       = datetime.now()
+            isNight   = (now.hour > 7) and (now.hour < 22)
+            threshold = 8 if isNight else 5
+            alert     = curAlertLevel > threshold
+            if (curAlertLevel > self.alertLevel) or not alert or (self.prevAlertTheshold != threshold):
                 self.set_state(self.alertEntity, state=("on" if alert else "off"))
-        # update the alert level for next time
-        self.alertLevel = curAlertLevel
+            # update the alert level for next time
+            self.alertLevel        = curAlertLevel
+            self.prevAlertTheshold = threshold
+                

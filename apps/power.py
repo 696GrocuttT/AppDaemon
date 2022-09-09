@@ -3,6 +3,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 import re
+import math
 
 
 class PowerControl(hass.Hass):
@@ -536,7 +537,7 @@ class PowerControl(hass.Hass):
 
 
     def allocateChangingSlots(self, exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates, solarChargingPlan, 
-                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now):
+                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, topUpToChargeCost = None):
         # We create a local copy of the available rates as there some cases (if there's no solar
         # surplus) where we don't want to remove an entry from the availableChargeRates array, 
         # but we need to remove it locally so we can keep track of which items we've used, and 
@@ -551,7 +552,8 @@ class PowerControl(hass.Hass):
          empty)                             = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)
         # initialise the allow empty before variable to the start of the profile so it has no effect to start with
         allowEmptyBefore                    = batProfile[0][0]
-        while empty or not fullyCharged:
+        maxAllowedChargeCost                = topUpToChargeCost if topUpToChargeCost else math.inf
+        while empty or topUpToChargeCost or not fullyCharged:
             # If the battery has gone flat during at any point, make sure the charging slot we search for is before the point it went flat
             chargeBefore   = None
             firstEmptySlot = None
@@ -561,15 +563,16 @@ class PowerControl(hass.Hass):
                     firstEmptySlot = firstEmptySlot[1]
                     chargeBefore   = firstEmptySlot
             else:
-                # If we're topping up the matter to full, then don't add slots after the full theshold end 
+                # If we're topping up the battery to full, then don't add slots after the full theshold end 
                 # time, as they won't actually help meet the full battery criteria.
                 chargeBefore = fullEndTimeThresh
             # Search for a charging slot
             (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPoweredRatesLocal, chargeBefore)                
             if chargeRate:
                 timeInSlot = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
-                # Only allow charging if there's room in the battery for this slot
-                willCharge = not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
+                # Only allow charging if there's room in the battery for this slot, and its below the max
+                # charge cost allowed
+                willCharge = (chargeRate[2] <= maxAllowedChargeCost) and not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
                 # Don't add any charging slots that are before the last fully charged slot, as it won't help
                 # get the battery to fully change at our target time, and it just fills the battery with more 
                 # expensive electricity when there's cheaper electriticy available later.
@@ -732,6 +735,14 @@ class PowerControl(hass.Hass):
                     gridChargingPlan               = newGridChargingPlan
                     houseGridPoweredPlan           = newHouseGridPoweredPlan
                     availableHouseGridPoweredRates = newAvailableHouseGridPoweredRates
+
+        # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
+        # the max charge cost we've already established. One usecase for this adding additional night time 
+        # grid charge slots
+        (batProfile, _, _, 
+         newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
+                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, maxChargeCost)    
+        maxChargeCost      = max(maxChargeCost, newMaxChargeCost)
 
         soc = (self.batteryEnergy / self.batteryCapacity) * 100
         self.log("Current battery change {0:.3f}".format(soc))

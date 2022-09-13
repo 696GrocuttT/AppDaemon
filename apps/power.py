@@ -600,13 +600,14 @@ class PowerControl(hass.Hass):
                     if firstEmptySlot:
                         emptySlotCost = next(filter(lambda x: x[1] == firstEmptySlot, self.importRateData), None)[2]
                         willCharge = willCharge and (chargeRate[2] <= emptySlotCost - self.minBuyUseMargin)
-                    # We don' want to buy power from the grid if we're going going empty, just to top up the 
+                    # We don't want to buy power from the grid if we're going going empty, just to top up the 
                     # battery for the sake of it. So we only allow grid charging to fill the battery if there's
                     # solar slots left that we can export at a higher price than the grid import. Because the
                     # chooseRate3() function will always choose the cheapest slot available. This boils down 
-                    # to just checking that there are solar charge slots still available
+                    # to just checking that there are solar charge slots still available. The exception to this 
+                    # is if we've been asked to top up to an explicit charge cost.
                     else:
-                        willCharge = willCharge and availableChargeRatesLocal
+                        willCharge = willCharge and (availableChargeRatesLocal or topUpToChargeCost)
                     # If the charge slot is still valid, add it to the plan now
                     if willCharge:
                         chargeTaken = timeInSlot * self.batteryGridChargeRate

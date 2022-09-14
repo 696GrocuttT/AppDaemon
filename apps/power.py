@@ -28,6 +28,7 @@ class PowerControl(hass.Hass):
         self.minBuyUseMargin              = float(self.args['minBuyUseMargin'])
         self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
         self.batFullPctHysteresis         = 3
+        self.batEfficiency                = 0.9
         
         self.solarData            = []
         self.exportRateData       = []
@@ -626,9 +627,7 @@ class PowerControl(hass.Hass):
                     availableHouseGridPoweredRatesLocal.remove(chargeRate)
                     
                 if willCharge:
-                    # Since the charge rates are already sorted in cost order, we know the current 
-                    # one we're adding is always the most expensive one so far.
-                    maxChargeCost = chargeRate[2]
+                    maxChargeCost = max(maxChargeCost, chargeRate[2])
                     # update the battery profile based on the new charging plan
                     (batProfile, _, fullyCharged, 
                      lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)   
@@ -678,7 +677,7 @@ class PowerControl(hass.Hass):
         # means we always choose a slot to be grid power the house before we try and charge the battery 
         # during that slot. This is important as we can't grid charge the battery unless we're also grid 
         # powering the house
-        availableHouseGridPoweredRates = [(x[0], x[1], x[2] * 0.9) for x in availableImportRates]
+        availableHouseGridPoweredRates = [(x[0], x[1], x[2] * self.batEfficiency) for x in availableImportRates]
 
         # We don't want to discharge the battery for any slots where the cost of running the house off 
         # the grid is lower than what we've previously paid to charge the battery. So add any grid 

@@ -407,13 +407,14 @@ class PowerControl(hass.Hass):
         # takes awhile to respond to tariff updates. This means that if the plan changes from change to 
         # standby then we don't want this to impact the tariff plan we need (which could take awhile to
         # update). To get round this we pre-emptivly set charging periods to peak in the tariff plan in 
-        # case we need to swap.
-        combinedPeakPlan             = sorted(dischargePlanNextHour        + standbyPlanNextHour + 
-                                              houseGridPoweredPlanNextHour + solarChargingPlanNextHour, key=lambda x: x[0])
-        combinedPeakPlan             = self.mergeSeries(combinedPeakPlan)
-        combinedPeakPeriods          = self.seriesToTariff(combinedPeakPlan, midnight)
-        self.defPrice                = "0.10 0.10 OFF_PEAK"
-        self.pwTariff                = {"0.90 0.90 ON_PEAK": combinedPeakPeriods}
+        # case we need to swap. We also extend the peak period into the past a bit. This prevents any
+        # strange behaviour given we have to have to change the battery settings just before the start of 
+        # each hour.
+        hourStart     = (now + timedelta(minutes=15)).replace(minute=0, second=0, microsecond=0)
+        peakPlan      = [(hourStart - timedelta(minutes=15), hourStart + timedelta(hours=2), 0)]
+        peakPeriods   = self.seriesToTariff(peakPlan, midnight)
+        self.defPrice = "0.10 0.10 OFF_PEAK"
+        self.pwTariff = {"0.90 0.90 ON_PEAK": peakPeriods}
         self.printSeries(solarChargingPlan,    "Solar charging plan",       mergeable=True)
         self.printSeries(gridChargingPlan,     "Grid charging plan",        mergeable=True)
         self.printSeries(houseGridPoweredPlan, "House grid powered plan",   mergeable=True)

@@ -600,7 +600,7 @@ class PowerControl(hass.Hass):
                     # cheapest charge rate we've found to determine if we should use this charge rate or not.
                     if firstEmptySlot:
                         emptySlotCost = next(filter(lambda x: x[1] == firstEmptySlot, self.importRateData), None)[2]
-                        willCharge = willCharge and (chargeRate[2] <= emptySlotCost - self.minBuyUseMargin)
+                        willCharge    = willCharge and (chargeRate[2] <= emptySlotCost - self.minBuyUseMargin)
                     # We don't want to buy power from the grid if we're going going empty, just to top up the 
                     # battery for the sake of it. So we only allow grid charging to fill the battery if there's
                     # solar slots left that we can export at a higher price than the grid import. Because the
@@ -669,6 +669,7 @@ class PowerControl(hass.Hass):
         houseGridPoweredPlan = []
         availableChargeRates = sorted(exportRateData, key=lambda x: x[2])
         availableImportRates = sorted(importRateData, key=lambda x: (x[2], x[0]))
+        minImportRate        = min(map(lambda x: x[2], self.importRateData))
         # We create a set of effective "charge" rates associated with not discharging the battery. The 
         # idea is that if we choose not to discharge for a period that's the same as charging the battery 
         # with the same amount of power. It's actually better than this because not cycling the battery
@@ -693,10 +694,13 @@ class PowerControl(hass.Hass):
                                                                           solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now)
         maxChargeCost                        = max(newMaxChargeCost, maxChargeCost)
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
-        # we can export more. We only do this if we still end up fully charged
-        while availableChargeRates:
-            mostExpenciveRate = availableChargeRates[-1]
-            del availableChargeRates[-1]
+        # we can export more. We only do this if we still end up fully charged. We can't use the 
+        # availableChargeRates list directly, as we need to remove entries as we go, and we still need 
+        # to have a list of available charge slots after this step.
+        potentialDischargeRates = list(availableChargeRates)
+        while potentialDischargeRates:
+            mostExpenciveRate = potentialDischargeRates[-1]
+            del potentialDischargeRates[-1]
             solarUsageForRate = self.powerForPeriod(solarUsage, mostExpenciveRate[0], mostExpenciveRate[1])
             if solarUsageForRate > 0:
                 newDischargeSlot                  = (mostExpenciveRate[0], mostExpenciveRate[1], solarUsageForRate)
@@ -705,6 +709,8 @@ class PowerControl(hass.Hass):
                 newUsageAfterSolar                = self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b)
                 newAvailableChargeRates           = list(availableChargeRates)
                 newSolarChargingPlan              = list(solarChargingPlan)
+                # We can't change in the slot we're trying to discharge in, so remove this from the trial list.
+                newAvailableChargeRates.remove(mostExpenciveRate)
                 # We can't charge and discharge at the same time, so remove the proposed discharge slot from 
                 # the available charge rates. We also do the same for the existing import slots. It can make
                 # sense to swap one import slot for export because the import and export prices are so different.
@@ -735,13 +741,21 @@ class PowerControl(hass.Hass):
                     gridChargingPlan               = newGridChargingPlan
                     houseGridPoweredPlan           = newHouseGridPoweredPlan
                     availableHouseGridPoweredRates = newAvailableHouseGridPoweredRates
+                    # We can't discharge for a slot if its already been used as a charge slot. So filter out 
+                    # any potential discharge slots if they're not still in the available charge list.
+                    potentialDischargeRates        = list(filter(lambda x: x in availableChargeRates, potentialDischargeRates))
 
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
-        # the max charge cost we've already established. One usecase for this adding additional night time 
-        # grid charge slots
+        # the minimum import cost. This means that we'll top up to 100% overright if that's the cheaper option,
+        # or if the solar export is a lower cost we'll end up topping up to 100% during the day. This in turn 
+        # means we're more likely to be prepared for the next day. EG if we need a higher charge level at the
+        # end of the day if we need to make it all the way to the next days solar charge period, or a lower 
+        # charge level at the end of the day because we only need to make it to the overright charge period
+        # max charge cost we've already established. One usecase for this adding additional night time grid
+        # charge slots
         (batProfile, _, _, 
          newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
-                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, maxChargeCost)    
+                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, minImportRate)    
         maxChargeCost      = max(maxChargeCost, newMaxChargeCost)
 
         soc = (self.batteryEnergy / self.batteryCapacity) * 100

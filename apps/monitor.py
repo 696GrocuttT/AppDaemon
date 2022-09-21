@@ -85,8 +85,8 @@ class SystemMonitor(hass.Hass):
         self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
         if self.alertEntity:
             now       = datetime.now()
-            isNight   = (now.hour > 7) and (now.hour < 22)
-            threshold = 8 if isNight else 5
+            isDay     = (now.hour > 7) and (now.hour < 22)
+            threshold = 5 if isDay else 8
             alert     = curAlertLevel > threshold
             if (curAlertLevel > self.alertLevel) or not alert or (self.prevAlertTheshold != threshold):
                 self.set_state(self.alertEntity, state=("on" if alert else "off"))

@@ -126,6 +126,9 @@ class PowerControl(hass.Hass):
         elif gridChargeInfo:
             curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.importRateData), 0)
             prevMaxChargeCost = max(prevMaxChargeCost, curRrate[2])
+        elif houseGridPowerdeInfo:
+            curRrate          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.importRateData), 0)
+            prevMaxChargeCost = max(prevMaxChargeCost, curRrate[2] * self.batEfficiency)
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)

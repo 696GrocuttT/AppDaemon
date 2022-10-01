@@ -191,7 +191,7 @@ class PowerControl(hass.Hass):
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
             curSampleEndTime = data[0]
-            if startTime:
+            if startTime and startTime != curSampleEndTime:
                 timeRangePowerData.append( (startTime, curSampleEndTime, data[1] * self.solarForecastMargin) )
             startTime = curSampleEndTime
         self.printSeries(timeRangePowerData, "Solar forecast")

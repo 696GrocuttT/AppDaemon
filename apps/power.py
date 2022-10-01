@@ -13,6 +13,7 @@ class PowerControl(hass.Hass):
         self.houseLoadEntityName          = self.args['houseLoadEntity']
         self.usageDaysHistory             = self.args['usageDaysHistory']
         self.eddiOutputEntityName         = self.args['eddiOutputEntity']
+        self.eddiPowerUsedTodayEntityName = self.args['eddiPowerUsedTodayEntity']
         self.batteryModeOutputEntityName  = self.args['batteryModeOutputEntity']
         self.batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
         self.batOutputTimeOffset          = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
@@ -439,7 +440,7 @@ class PowerControl(hass.Hass):
         # Calculate the target rate for the eddi
         eddiPlan          = []
         eddiTargetRate    = self.gasRate / self.gasEfficiency
-        eddiPowerRequired = self.eddiTargetPower
+        eddiPowerRequired = self.eddiTargetPower - float(self.get_state(self.eddiPowerUsedTodayEntityName))
         ratesCheapFirst   = sorted(exportRateData, key=lambda x: x[2])
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:

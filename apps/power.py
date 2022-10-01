@@ -393,7 +393,7 @@ class PowerControl(hass.Hass):
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
-        eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus)
+        eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus, solarChargingPlan)
         
         # Create a fake tariff with peak time covering the discharge plan
         midnight                     = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -435,7 +435,7 @@ class PowerControl(hass.Hass):
         self.planUpdateTime       = now
 
             
-    def calculateEddiPlan(self, exportRateData, solarSurplus):
+    def calculateEddiPlan(self, exportRateData, solarSurplus, batterSolarChangePlan):
         # Calculate the target rate for the eddi
         eddiPlan          = []
         eddiTargetRate    = self.gasRate / self.gasEfficiency
@@ -451,7 +451,16 @@ class PowerControl(hass.Hass):
                 eddiPowerRequired = eddiPowerRequired - powerTaken
                 eddiPlan.append((rate[0], rate[1], powerTaken))
                 if eddiPowerRequired < 0:
-                    break     
+                    break
+        # Add on any slots where the battery is charging and the rate is below the threshold. 
+        # This means we divert any surplus that wasn't forecast that the battery could change 
+        # from. EG if the battery fills up early, or we exceed the battery charge rate.
+        for chargePeriod in batterSolarChangePlan:
+            # If the entry is already in the eddi plan, don't try and add it again
+            if not any(x[0] == chargePeriod[0] for x in eddiPlan):
+                exportRate = next(filter(lambda x: x[0] == chargePeriod[0], exportRateData))
+                if exportRate[2] <= eddiTargetRate:
+                    eddiPlan.append((chargePeriod[0], chargePeriod[1], 0))
         eddiPlan.sort(key=lambda x: x[0])
         return eddiPlan
     

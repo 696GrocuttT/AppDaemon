@@ -44,6 +44,10 @@ class PowerControl(hass.Hass):
         self.dischargeToHousePlan = []
         self.eddiPlan             = []
         self.planUpdateTime       = None
+        self.tariffOverrides      = {'gas':    {0.1473675: 0.1031},
+                                     'export': {},
+                                     'import': {0.6742669499999999: 0.4435, 
+                                                0.2551668:          0.1489} }
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -71,7 +75,7 @@ class PowerControl(hass.Hass):
         self.listen_state(self.batteryEnergyChanged, batteryEnergyEntityName)
         # Setup getting gas rate
         gasRateEntityName = self.args['gasRateEntity']
-        self.gasRate      = float(self.get_state(gasRateEntityName))
+        self.gasRateChanged(None, None, math.nan, self.get_state(gasRateEntityName), None)
         self.listen_state(self.gasRateChanged, gasRateEntityName) 
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
@@ -149,7 +153,10 @@ class PowerControl(hass.Hass):
 
     def gasRateChanged(self, entity, attribute, old, new, kwargs):
         new = float(new)
-        self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(self.gasRate, new))
+        override = self.tariffOverrides['gas']
+        if override:
+            new = override.get(new, new)
+        self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(float(old), new))
         self.gasRate = new
                     
         
@@ -230,6 +237,10 @@ class PowerControl(hass.Hass):
                                        datetime.fromisoformat(x['to']).astimezone(), 
                                        x['rate']/100), 
                             rawRateData))
+        override = self.tariffOverrides[type]
+        if override:
+            rateData = list(map(lambda x: (x[0], x[1], override.get(x[2], x[2])), 
+                                rateData))
         rateData.sort(key=lambda x: x[0])    
         self.printSeries(rateData, "Rate data (" + type + ")")
         return rateData

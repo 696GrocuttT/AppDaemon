@@ -456,12 +456,15 @@ class PowerControl(hass.Hass):
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:
                 break
-            maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
-            power    = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+            maxPower   = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
+            power      = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+            powerTaken = max(min(power, maxPower), 0)
+            # We still plan to use the eddi even if the forcast says there won't be a surplus.
+            # This is in case the forcast is wrong, or there are dips in usage or peaks in 
+            # generation that lead to short term surpluses
+            eddiPlan.append((rate[0], rate[1], powerTaken))
             if power > 0:
-                powerTaken        = min(power, maxPower)
                 eddiPowerRequired = eddiPowerRequired - powerTaken
-                eddiPlan.append((rate[0], rate[1], powerTaken))
                 if eddiPowerRequired < 0:
                     break
         # Add on any slots where the battery is charging and the rate is below the threshold. 

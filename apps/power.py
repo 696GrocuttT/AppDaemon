@@ -807,6 +807,9 @@ class PowerControl(hass.Hass):
         soc = (self.batteryEnergy / self.batteryCapacity) * 100
         self.log("Current battery change {0:.3f}".format(soc))
         self.log("Battery change cost {0:.2f}".format(maxChargeCost))
+        exportProfile = self.opOnSeries(solarSurplus, solarChargingPlan, lambda a, b: 0 if b else a)
+        exportProfile = list(filter(lambda x: x[2], exportProfile))
+        self.printSeries(exportProfile, "Export profile")
         self.printSeries(batProfile, "Battery profile")
         solarChargingPlan.sort(key=lambda x: x[0])
         gridChargingPlan.sort(key=lambda x: x[0])

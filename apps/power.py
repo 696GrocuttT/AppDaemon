@@ -151,6 +151,14 @@ class PowerControl(hass.Hass):
                                                                                           "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
 
 
+    def toFloat(self, string, default):
+        try:
+            value = float(string)
+        except ValueError:
+            value = default
+        return value
+
+
     def gasRateChanged(self, entity, attribute, old, new, kwargs):
         new = float(new)
         override = self.tariffOverrides['gas']
@@ -451,7 +459,7 @@ class PowerControl(hass.Hass):
         # Calculate the target rate for the eddi
         eddiPlan          = []
         eddiTargetRate    = self.gasRate / self.gasEfficiency
-        eddiPowerRequired = self.eddiTargetPower - float(self.get_state(self.eddiPowerUsedTodayEntityName))
+        eddiPowerRequired = self.eddiTargetPower - self.toFloat(self.get_state(self.eddiPowerUsedTodayEntityName), 0)
         ratesCheapFirst   = sorted(exportRateData, key=lambda x: x[2])
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:
@@ -566,7 +574,7 @@ class PowerControl(hass.Hass):
 
 
     def allocateChangingSlots(self, exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates, solarChargingPlan, 
-                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, topUpToChargeCost = None):
+                              gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, maxHouseGridPoweredRate, topUpToChargeCost = None):
         # We create a local copy of the available rates as there some cases (if there's no solar
         # surplus) where we don't want to remove an entry from the availableChargeRates array, 
         # but we need to remove it locally so we can keep track of which items we've used, and 
@@ -646,6 +654,10 @@ class PowerControl(hass.Hass):
                     # Same reason as above, always remove the local charge rate
                     availableImportRatesLocal.remove(chargeRate)
                 elif rateId == 2: # house on grid power
+                    # Don't run the house on grid power if the slot is the max grid powered price, we might as
+                    # well just let the battery go flat, and in some cases due to the margins we wouldn't actually
+                    # end up using that much grid power as we'd pre-planned it.
+                    willCharge = willCharge and chargeRate[2] < maxHouseGridPoweredRate
                     if willCharge:
                         usage = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1])
                         # we can only use a charging slot once, so remove it from the available list
@@ -698,6 +710,7 @@ class PowerControl(hass.Hass):
         availableChargeRates = sorted(exportRateData, key=lambda x: x[2])
         availableImportRates = sorted(importRateData, key=lambda x: (x[2], x[0]))
         minImportRate        = min(map(lambda x: x[2], self.importRateData))
+        maxImportRate        = max(map(lambda x: x[2], self.importRateData))
         # We create a set of effective "charge" rates associated with not discharging the battery. The 
         # idea is that if we choose not to discharge for a period that's the same as charging the battery 
         # with the same amount of power. It's actually better than this because not cycling the battery
@@ -707,6 +720,7 @@ class PowerControl(hass.Hass):
         # during that slot. This is important as we can't grid charge the battery unless we're also grid 
         # powering the house
         availableHouseGridPoweredRates = [(x[0], x[1], x[2] * self.batEfficiency) for x in availableImportRates]
+        maxHouseGridPoweredRate        = maxImportRate * self.batEfficiency
 
         # We don't want to discharge the battery for any slots where the cost of running the house off 
         # the grid is lower than what we've previously paid to charge the battery. So add any grid 
@@ -719,8 +733,10 @@ class PowerControl(hass.Hass):
 
         # calculate the initial charging profile
         (batProfile, _, _, newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
-                                                                          solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now)
+                                                                          solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now,
+                                                                          maxHouseGridPoweredRate)
         maxChargeCost                        = max(newMaxChargeCost, maxChargeCost)
+
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
         # availableChargeRates list directly, as we need to remove entries as we go, and we still need 
@@ -748,7 +764,8 @@ class PowerControl(hass.Hass):
                 newHouseGridPoweredPlan           = list(filter(lambda x: x[0] != newDischargeSlot[0], houseGridPoweredPlan))
                 (batProfile, fullyCharged, 
                  empty, newMaxChargeCost)         = self.allocateChangingSlots(exportRateData, newAvailableChargeRates, newAvailableImportRates, newAvailableHouseGridPoweredRates, 
-                                                                               newSolarChargingPlan, newGridChargingPlan, newHouseGridPoweredPlan, newSolarSurplus, newUsageAfterSolar, now)    
+                                                                               newSolarChargingPlan, newGridChargingPlan, newHouseGridPoweredPlan, newSolarSurplus, newUsageAfterSolar, 
+                                                                               now, maxHouseGridPoweredRate)    
                 newMaxChargeCost                  = max(maxChargeCost, newMaxChargeCost)
                 # If we're still fully charged after swapping a slot to discharging, then make that the plan 
                 # of record by updating the arrays. We also skip a potential discharge period if the 
@@ -783,7 +800,8 @@ class PowerControl(hass.Hass):
         # charge slots
         (batProfile, _, _, 
          newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
-                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, minImportRate)    
+                                                        solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, 
+                                                        maxHouseGridPoweredRate, minImportRate)    
         maxChargeCost      = max(maxChargeCost, newMaxChargeCost)
 
         soc = (self.batteryEnergy / self.batteryCapacity) * 100

@@ -257,29 +257,46 @@ class PowerControl(hass.Hass):
     def updateUsageHistory(self, kwargs):
         self.log("Updating usage history")
         # Calculate a time in the past to start profiling usage from
-        startTime           = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        startTime           = startTime - timedelta(days=self.usageDaysHistory) 
-        self.usageStartTime = startTime
+        startTime               = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        startTime               = startTime - timedelta(days=self.usageDaysHistory) 
+        self.usageStartTime     = startTime
         # Now request the history data. Note: we subtract a further 2 hours from the start time so 
         # we're guaranteed to get data from before the start time we requested
+        self.usageFetchFromTime = startTime - timedelta(hours=2)
         self.get_history(entity_id  = self.houseLoadEntityName,
-                         start_time = startTime - timedelta(hours=2), 
+                         start_time = self.usageFetchFromTime,
                          callback   = self.usageHistoryCallback)
         
         
     def usageHistoryCallback(self, kwargs):
-        powerData = list(map(lambda x: (datetime.fromisoformat(x['last_changed']), 
-                                        x['state']), 
-                             kwargs["result"][0]))        
-        powerData.sort(key=lambda x: x[0])
+        self.usagePowerData = kwargs
+        self.get_history(entity_id  = self.eddiPowerUsedTodayEntityName,
+                         start_time = self.usageFetchFromTime,
+                         callback   = self.eddiHistoryCallBack)
+
+
+    def processUsageDataToTimeRange(self, rawUsageData):
+        rawUsageData = list(map(lambda x: (datetime.fromisoformat(x['last_changed']), 
+                                           x['state']), 
+                                rawUsageData["result"][0]))
+        rawUsageData.sort(key=lambda x: x[0])    
         timeRangeUsageData = []
         startPower         = None
         startTime          = None
+        powerOffset        = 0
+        prevPower          = 0
         # Reformat the data so we end up with a tuple with elements (startTime, end , power delta)
-        for data in powerData:
+        for data in rawUsageData:
             try:
                 curSampleEndTime  = data[0]
+                # Some data series reset at the end of the day, spot a reduction in the value and 
+                # use that to update the offset we apply to turn it into a monotonic series.
                 curSampleEndPower = float(data[1])
+                if curSampleEndPower == 0:
+                    powerOffset = prevPower
+                curSampleEndPower = curSampleEndPower + powerOffset
+                prevPower         = curSampleEndPower
+                # Reformat the data to the correct from-to, and delta format
                 if startTime:
                     timeRangeUsageData.append( (startTime, curSampleEndTime, curSampleEndPower - startPower) )
                 startPower = curSampleEndPower
@@ -287,7 +304,14 @@ class PowerControl(hass.Hass):
             except ValueError:
                 # just ignore invalid samples
                 pass
-        
+        return timeRangeUsageData
+
+
+    def eddiHistoryCallBack(self, kwargs):
+        # Convert the raw data from HA into time series delta data
+        timeRangeEddiUsageData = self.processUsageDataToTimeRange(kwargs)
+        timeRangeUsageData     = self.processUsageDataToTimeRange(self.usagePowerData)
+
         # Now go through the data creating an average usage for each time period based on the last x days history
         forecastUsage          = []
         now                    = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
@@ -298,10 +322,16 @@ class PowerControl(hass.Hass):
             # go back over the last few days for this time period and get the usage
             avgUsage = 0.0
             for days in range(1, self.usageDaysHistory+1):
-                daysDelta = timedelta(days=days)
-                avgUsage  = avgUsage + self.powerForPeriod(timeRangeUsageData, 
-                                                           forecastUsageStartTime - daysDelta, 
-                                                           forecastUsageEndTime   - daysDelta)
+                daysDelta      = timedelta(days=days)
+                # For each half hour period we subtract the eddi usage from the total usage. We don't
+                # want the eddi distorting the usage totals as we explicitly plan the eddi usage seperately.
+                usageForPeriod = self.powerForPeriod(timeRangeUsageData, 
+                                                     forecastUsageStartTime - daysDelta, 
+                                                     forecastUsageEndTime   - daysDelta)
+                eddiForPeriod  = self.powerForPeriod(timeRangeEddiUsageData, 
+                                                     forecastUsageStartTime - daysDelta, 
+                                                     forecastUsageEndTime   - daysDelta)
+                avgUsage       = avgUsage + (usageForPeriod - eddiForPeriod)
             avgUsage = (avgUsage / self.usageDaysHistory) * self.usageMargin
             # finally add the data to the usage array
             forecastUsage.append((forecastUsageStartTime, forecastUsageEndTime, avgUsage)) 

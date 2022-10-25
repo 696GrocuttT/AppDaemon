@@ -51,10 +51,10 @@ class PowerControl(hass.Hass):
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
-        self.rawSolarData.append(self.get_state(solarTodayEntityName,    attribute='forecast'))
-        self.rawSolarData.append(self.get_state(solarTomorrowEntityName, attribute='forecast'))
-        self.listen_state(self.solarChanged, solarTodayEntityName,    attribute='forecast', kwargs=0) 
-        self.listen_state(self.solarChanged, solarTomorrowEntityName, attribute='forecast', kwargs=1)
+        self.rawSolarData.append(self.get_state(solarTodayEntityName,    attribute='detailedForecast'))
+        self.rawSolarData.append(self.get_state(solarTomorrowEntityName, attribute='detailedForecast'))
+        self.listen_state(self.solarChanged, solarTodayEntityName,    attribute='detailedForecast', kwargs=0) 
+        self.listen_state(self.solarChanged, solarTomorrowEntityName, attribute='detailedForecast', kwargs=1)
         self.parseSolar()
         # Setup getting the export rates
         exportRateEntityName = self.args['exportRateEntity']
@@ -198,18 +198,20 @@ class PowerControl(hass.Hass):
         self.log("Updating solar forecast")
         # flatten the forecasts arrays for the different days
         flatForecast = [x for xs in self.rawSolarData for x in xs]        
-        powerData    = list(map(lambda x: (datetime.fromisoformat(x['period_end']), 
+        powerData    = list(map(lambda x: (datetime.fromisoformat(x['period_start']), 
                                            x['pv_estimate']), 
                                 flatForecast))
         powerData.sort(key=lambda x: x[0])
         timeRangePowerData = []
-        startTime          = None
+        prevStartTime      = None
+        prevPower          = None
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
-            curSampleEndTime = data[0]
-            if startTime and startTime != curSampleEndTime:
-                timeRangePowerData.append( (startTime, curSampleEndTime, data[1] * self.solarForecastMargin) )
-            startTime = curSampleEndTime
+            curStartTime = data[0]
+            if prevPower:
+                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower) )
+            prevStartTime = curStartTime
+            prevPower     = data[1] * self.solarForecastMargin
         self.printSeries(timeRangePowerData, "Solar forecast")
         self.solarData = timeRangePowerData
 

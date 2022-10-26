@@ -486,11 +486,15 @@ class PowerControl(hass.Hass):
         self.eddiPlan             = eddiPlan
         self.planUpdateTime       = now
 
-            
+
+    def eddiTargetRate(self):
+        return self.gasRate / self.gasEfficiency
+
+
     def calculateEddiPlan(self, exportRateData, solarSurplus, batterSolarChangePlan):
         # Calculate the target rate for the eddi
         eddiPlan          = []
-        eddiTargetRate    = self.gasRate / self.gasEfficiency
+        eddiTargetRate    = self.eddiTargetRate()
         eddiPowerRequired = self.eddiTargetPower - self.toFloat(self.get_state(self.eddiPowerUsedTodayEntityName), 0)
         ratesCheapFirst   = sorted(exportRateData, key=lambda x: x[2])
         for rate in ratesCheapFirst:
@@ -833,7 +837,12 @@ class PowerControl(hass.Hass):
         # for this adding additional night time grid charge slots
         solarChargeCosts   = self.opOnSeries(solarChargingPlan, exportRateData, lambda a, b: b)
         maxSolarChargeCost = max(map(lambda x: x[2], solarChargeCosts))
-        topUpMaxCost       = min(maxSolarChargeCost, minImportRate)
+        # We also take account of the eddi threshold, so don't want to eddi if we could be using the energy
+        # to top up the battery.
+        # WARNING: This assumes that the eddi target rate is lower than the lowest grid charge cost. Which is
+        # true for the moment. If this changes we should also thing about using the eddi from overnight 
+        # energy.
+        topUpMaxCost       = min(max(self.eddiTargetRate(), maxSolarChargeCost), minImportRate)
         (batProfile, _, _, 
          newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
                                                         solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, 
@@ -842,6 +851,7 @@ class PowerControl(hass.Hass):
 
         soc = (self.batteryEnergy / self.batteryCapacity) * 100
         self.log("Current battery change {0:.3f}".format(soc))
+        self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Battery change cost {0:.2f}".format(maxChargeCost))
         exportProfile = self.opOnSeries(solarSurplus, solarChargingPlan, lambda a, b: 0 if b else a)
         exportProfile = list(filter(lambda x: x[2], exportProfile))

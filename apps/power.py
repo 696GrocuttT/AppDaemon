@@ -823,17 +823,21 @@ class PowerControl(hass.Hass):
                     potentialDischargeRates        = list(filter(lambda x: x in availableChargeRates, potentialDischargeRates))
 
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
-        # the minimum import cost. This means that we'll top up to 100% overright if that's the cheaper option,
-        # or if the solar export is a lower cost we'll end up topping up to 100% during the day. This in turn 
-        # means we're more likely to be prepared for the next day. EG if we need a higher charge level at the
-        # end of the day if we need to make it all the way to the next days solar charge period, or a lower 
-        # charge level at the end of the day because we only need to make it to the overright charge period
-        # max charge cost we've already established. One usecase for this adding additional night time grid
-        # charge slots
+        # the minimum of the lowest import cost or the max solar charge cost. This means we won't end up
+        # increasing the overall charge cost per/kwh. In addition, this means that we'll top up to 100%
+        # overright if that's the cheaper option, or if the solar export is a lower cost we'll end up topping
+        # up to 100% during the day. This in turn means we're more likely to be prepared for the next day. EG
+        # if we need a higher charge level at the end of the day if we need to make it all the way to the
+        # next days solar charge period, or a lower charge level at the end of the day because we only need
+        # to make it to the overright charge period max charge cost we've already established. One usecase
+        # for this adding additional night time grid charge slots
+        solarChargeCosts   = self.opOnSeries(solarChargingPlan, exportRateData, lambda a, b: b)
+        maxSolarChargeCost = max(map(lambda x: x[2], solarChargeCosts))
+        topUpMaxCost       = min(maxSolarChargeCost, minImportRate)
         (batProfile, _, _, 
          newMaxChargeCost) = self.allocateChangingSlots(exportRateData, availableChargeRates, availableImportRates, availableHouseGridPoweredRates,  
                                                         solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, solarSurplus, usageAfterSolar, now, 
-                                                        maxHouseGridPoweredRate, minImportRate)    
+                                                        maxHouseGridPoweredRate, topUpMaxCost)    
         maxChargeCost      = max(maxChargeCost, newMaxChargeCost)
 
         soc = (self.batteryEnergy / self.batteryCapacity) * 100

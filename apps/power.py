@@ -368,7 +368,9 @@ class PowerControl(hass.Hass):
     def seriesToString(self, series, mergeable=False):
         if mergeable:
             series = self.mergeSeries(series)
-        if series and len(series[0]) > 4:
+        if series and len(series[0]) > 5:
+            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3} {4} {5}".format(*x), series)
+        elif series and len(series[0]) > 4:
             strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3} {4}".format(*x), series)
         elif series and len(series[0]) > 3:
             strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3}".format(*x), series)
@@ -551,7 +553,8 @@ class PowerControl(hass.Hass):
             if empty:
                 emptyInAnySlot   = True
                 batteryRemaining = batReserveEnergy
-            batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty))
+            pct = round((batteryRemaining / self.batteryCapacity) * 100, 1)
+            batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty, pct))
            
         # calculate the end time of the last fully charged slot
         lastFullSlotEndTime = None

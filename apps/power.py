@@ -836,7 +836,7 @@ class PowerControl(hass.Hass):
         # to make it to the overright charge period max charge cost we've already established. One usecase
         # for this adding additional night time grid charge slots
         solarChargeCosts   = self.opOnSeries(solarChargingPlan, exportRateData, lambda a, b: b)
-        maxSolarChargeCost = max(map(lambda x: x[2], solarChargeCosts))
+        maxSolarChargeCost = max(map(lambda x: x[2], solarChargeCosts), default=0)
         # We also take account of the eddi threshold, so don't want to eddi if we could be using the energy
         # to top up the battery.
         # WARNING: This assumes that the eddi target rate is lower than the lowest grid charge cost. Which is

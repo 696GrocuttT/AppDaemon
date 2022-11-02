@@ -649,6 +649,10 @@ class PowerControl(hass.Hass):
                 # The charge cost is the cost to get x amount of energy in the battery, due to the overheads
                 # this is higher than the cost of the rate used to charge the battery.
                 chargeCost = chargeRate[2] / self.batEfficiency
+                # Pre calculate if the charge rase is below the max import rate. For this comparison we
+                # use the raw charge cost and don't take account of the battery efficency, is this gives
+                # us an apples to apples comparison with the import rates.
+                belowMaxImportRate = chargeRate[2] < maxImportRate
                 # Only allow charging if there's room in the battery for this slot, and its below the max
                 # charge cost allowed
                 willCharge = (chargeCost <= maxAllowedChargeCost) and not next(filter(lambda x: x[0] == chargeRate[0], batProfile))[3]
@@ -672,6 +676,9 @@ class PowerControl(hass.Hass):
                     # function for other types of activity
                     availableChargeRatesLocal.remove(chargeRate)
                 elif rateId == 1: # grid charge
+                    # Don't charge off the max grid powered slot, its better to just let the battery go flat 
+                    # in this case. 
+                    willCharge = willCharge and belowMaxImportRate
                     # We don't want to end up charging the battery when its cheaper to just run the house 
                     # directly from the grid. So if the battery is going to be empty, check what the 
                     # electricity import rate is for the slot where it goes empty and compare that to the
@@ -702,7 +709,7 @@ class PowerControl(hass.Hass):
                     # Don't run the house on grid power if the slot is the max grid powered price, we might as
                     # well just let the battery go flat, and in some cases due to the margins we wouldn't actually
                     # end up using that much grid power as we'd pre-planned it.
-                    willCharge = willCharge and chargeCost < maxImportRate
+                    willCharge = willCharge and belowMaxImportRate
                     if willCharge:
                         usage = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1])
                         # we can only use a charging slot once, so remove it from the available list
@@ -865,7 +872,7 @@ class PowerControl(hass.Hass):
         gridChargingPlan.sort(key=lambda x: x[0])
         dischargePlan.sort(key=lambda x: x[0])
         houseGridPoweredPlan.sort(key=lambda x: x[0])
-        # When calculating the battery profile we allow the "house on frid power" and "grid charging" plans to
+        # When calculating the battery profile we allow the "house on grid power" and "grid charging" plans to
         # overlap. However we need to remove this overlap before returning the plan to the caller.
         houseGridPoweredPlan = self.opOnSeries(houseGridPoweredPlan, gridChargingPlan, lambda a, b: 0 if b else a)
         houseGridPoweredPlan = list(filter(lambda x: x[2], houseGridPoweredPlan))

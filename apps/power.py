@@ -10,6 +10,7 @@ class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
         self.solarForecastMargin          = float(self.args['solarForecastMargin'])
+        self.solarForecastPercentile      = float(self.args['solarForecastPercentile'])
         self.houseLoadEntityName          = self.args['houseLoadEntity']
         self.usageDaysHistory             = self.args['usageDaysHistory']
         self.eddiOutputEntityName         = self.args['eddiOutputEntity']
@@ -193,25 +194,50 @@ class PowerControl(hass.Hass):
     def importRatesChanged(self, entity, attribute, old, new, kwargs):
         self.importRateData = self.parseRates(new, "import")
 
+
+    def interpolate(self, x1: float, x2: float, y1: float, y2: float, x: float):
+        return ((y2 - y1) * x + x2 * y1 - x1 * y2) / (x2 - x1)
+
     
     def parseSolar(self):
         self.log("Updating solar forecast")
         # flatten the forecasts arrays for the different days
         flatForecast = [x for xs in self.rawSolarData for x in xs]        
         powerData    = list(map(lambda x: (datetime.fromisoformat(x['period_start']), 
-                                           x['pv_estimate']), 
+                                           x['pv_estimate'],
+                                           x.get('pv_estimate10'),
+                                           x.get('pv_estimate90')), 
                                 flatForecast))
         powerData.sort(key=lambda x: x[0])
         timeRangePowerData = []
         prevStartTime      = None
         prevPower          = None
+        prevMetaData       = None
+        prevMinEstimate    = None
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
             curStartTime = data[0]
             if prevPower:
-                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower) )
+                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMetaData) )
             prevStartTime = curStartTime
-            prevPower     = data[1] * self.solarForecastMargin
+            # Process the estimates
+            percentile10 = data[2]
+            percentile50 = data[1]
+            percentile90 = data[3]
+            if percentile10:
+                percentile10 = round(percentile10, 3)
+            if percentile90:
+                percentile90 = round(percentile90, 3)
+            if percentile10 and percentile90:
+                if self.solarForecastPercentile < 50:
+                    prevMinEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastPercentile)
+                else:
+                    prevMinEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastPercentile)
+            else:
+                prevMinEstimate = percentile50 * self.solarForecastMargin
+            prevMinEstimate = round(prevMinEstimate, 3)
+            prevPower       = round(percentile50, 3)
+            prevMetaData    = (percentile10, prevPower, percentile90)
         self.printSeries(timeRangePowerData, "Solar forecast")
         self.solarData = timeRangePowerData
 

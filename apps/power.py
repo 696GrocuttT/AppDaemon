@@ -799,7 +799,7 @@ class PowerControl(hass.Hass):
         # the grid is lower than what we've previously paid to charge the battery. So add any grid 
         # powered rates that are below the current charge cost
         maxChargeCost = float(self.get_state(self.prevMaxChargeCostEntity))
-        for rate in list(filter(lambda x: x[2] <= maxChargeCost, availableHouseGridPoweredRates)):
+        for rate in list(filter(lambda x: x[2] < maxChargeCost, availableHouseGridPoweredRates)):
             availableHouseGridPoweredRates.remove(rate)
             usage = self.powerForPeriod(usageAfterSolar, rate[0], rate[1])
             houseGridPoweredPlan.append((rate[0], rate[1], usage))

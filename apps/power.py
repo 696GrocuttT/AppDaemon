@@ -609,7 +609,7 @@ class PowerControl(hass.Hass):
         return (batForecast, lastTargetFullTime, fullChargeAfterTargetTime, lastFullSlotEndTime, emptyInAnySlot)
 
 
-    def chooseRate(self, rateA, rateB, notAfterTime=None):
+    def chooseRate(self, rateA, rateB, notAfterTime):
         foundRate = []
         isRateA   = None
         # if requested don't use any slots after the specified time
@@ -629,7 +629,7 @@ class PowerControl(hass.Hass):
         return (foundRate, isRateA)
 
 
-    def chooseRate3(self, rateA, rateB, rateC, notAfterTime=None):
+    def chooseRate3(self, rateA, rateB, rateC, notAfterTime):
         (foundRate, isRateA)  = self.chooseRate(rateA,     rateB, notAfterTime)
         foundRate             = [foundRate] if foundRate else []
         (foundRate, isRateAB) = self.chooseRate(foundRate, rateC, notAfterTime)
@@ -646,6 +646,7 @@ class PowerControl(hass.Hass):
         # which are still available
         availableChargeRatesLocal           = list(availableChargeRates)
         availableImportRatesLocal           = list(availableImportRates)
+        availableImportRatesLocalUnused     = list(availableImportRatesLocal)
         availableHouseGridPoweredRatesLocal = list(availableHouseGridPoweredRates)
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         maxChargeCost                       = 0
@@ -711,7 +712,26 @@ class PowerControl(hass.Hass):
                     # cheapest charge rate we've found to determine if we should use this charge rate or not.
                     if firstEmptySlot:
                         emptySlotCost = next(filter(lambda x: x[1] == firstEmptySlot, self.importRateData), None)[2]
-                        willCharge    = willCharge and (chargeCost <= emptySlotCost - self.minBuyUseMargin)
+                        cheapEnough   = (chargeCost <= emptySlotCost - self.minBuyUseMargin)
+                        # If we're not using the slot because its not cheap enough, then we shouldn't remove
+                        # the slot from the list of available slots. This is because we might encounter an
+                        # empty slot later on where the cost differential is large enough to warrant using
+                        # this slot. There is a side effect to this. Becauase we might not be removing the
+                        # slot from the available slot list, we need another way of making sure we don't just
+                        # try the same slot next time arround and end up in an infinite loop. To handle all of 
+                        # this we maintain two sets of slot lists:
+                        #   availableImportRatesLocal: Is the list of slots currently being considered, we 
+                        #     always remove entries from this as we check them. Even if the reason we're 
+                        #     rejected the slot is that its not cheap enough. This slot list is used for 
+                        #     checking on the next iteration, so this behaviour prevents infinite loops.
+                        #   availableImportRatesLocalUnused: This list contains all the unused slots, we only 
+                        #     remove a slot from this list if we've eliminated the slot for a reason other than 
+                        #     it not being cheap enough. Every time we update allowEmptyBefore we restore 
+                        #     availableImportRatesLocal based on whats in availableImportRatesLocalUnused so we 
+                        #     can reconsider slots there were rejected because they weren't cheap enough for 
+                        #     the empty slot cost we were considering at the time.
+                        slotUsed      = not willCharge or  cheapEnough
+                        willCharge    =     willCharge and cheapEnough
                     # We don't want to buy power from the grid if we're going going empty, just to top up the 
                     # battery for the sake of it. So we only allow grid charging to fill the battery if there's
                     # solar slots left that we can export at a higher price than the grid import. Because the
@@ -719,6 +739,7 @@ class PowerControl(hass.Hass):
                     # to just checking that there are solar charge slots still available. The exception to this 
                     # is if we've been asked to top up to an explicit charge cost.
                     else:
+                        slotUsed   = True
                         willCharge = willCharge and (availableChargeRatesLocal or topUpToChargeCost)
                     # If the charge slot is still valid, add it to the plan now
                     if willCharge:
@@ -728,6 +749,9 @@ class PowerControl(hass.Hass):
                         gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
                     # Same reason as above, always remove the local charge rate
                     availableImportRatesLocal.remove(chargeRate)
+                    # See detaied explanation where slotUsed is set above
+                    if slotUsed:
+                        availableImportRatesLocalUnused.remove(chargeRate)
                 elif rateId == 2: # house on grid power
                     # Because we're not actually charging the battery, the "chargeCost" is just the rate, and
                     # doesn't take into account the battery efficency.
@@ -754,7 +778,9 @@ class PowerControl(hass.Hass):
                 # slot to the time before it gets empty. This can result in not finding a charge slot. 
                 # In this case we don't terminate the search we just allow the battery to be empty for 
                 # that slot and try again to change during a later slot.
-                allowEmptyBefore = firstEmptySlot
+                allowEmptyBefore          = firstEmptySlot
+                # See detaied explanation where slotUsed is set above
+                availableImportRatesLocal = list(availableImportRatesLocalUnused)
             else:
                 break
         return (batProfile, fullyCharged, empty, maxChargeCost)

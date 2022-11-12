@@ -389,11 +389,16 @@ class PowerControl(hass.Hass):
 
     def mergeSeries(self, series):
         mergedSeries = []
+        if series:
+            valueIdxList = list(range(2, len(series[0])))
         for item in series:
             # If we already have an item in the merged list, and the last item of that list 
             # has an end time that matches the start time of the new item. Merge them.
             if mergedSeries and mergedSeries[-1][1] == item[0]:
-                mergedSeries[-1] = (mergedSeries[-1][0], item[1], mergedSeries[-1][2] + item[2])
+                updatedElement = [mergedSeries[-1][0], item[1]]
+                for idx in valueIdxList:
+                    updatedElement.append(mergedSeries[-1][idx] + item[idx])
+                mergedSeries[-1] = tuple(updatedElement)
             else:
                 mergedSeries.append(item)
         return mergedSeries
@@ -581,7 +586,7 @@ class PowerControl(hass.Hass):
         return eddiPlan
     
     
-    def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now):
+    def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now, percentileIndex):
         batForecast      = []
         # For full charge detection we compare against 99% full, this is so any minor changes 
         # is battery capacity or energe when we're basically fully charged, and won't charge 
@@ -594,10 +599,10 @@ class PowerControl(hass.Hass):
         totChargeEnerge  = 0.0
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(exportRateData):
-            chargeEnergy     = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1]) + 
+            chargeEnergy     = (self.powerForPeriod(solarChargingPlan,    rate[0], rate[1], percentileIndex) +
                                 self.powerForPeriod(gridChargingPlan,     rate[0], rate[1]))
             batteryRemaining = (batteryRemaining + chargeEnergy - 
-                                self.powerForPeriod(usageAfterSolar,      rate[0], rate[1]) + 
+                                self.powerForPeriod(usageAfterSolar,      rate[0], rate[1], percentileIndex) +
                                 self.powerForPeriod(houseGridPoweredPlan, rate[0], rate[1]))
             totChargeEnerge  = totChargeEnerge + chargeEnergy
             fullyChanged     = batteryRemaining >= self.batteryCapacity
@@ -677,11 +682,18 @@ class PowerControl(hass.Hass):
         availableImportRatesLocal           = list(availableImportRates)
         availableImportRatesLocalUnused     = list(availableImportRatesLocal)
         availableHouseGridPoweredRatesLocal = list(availableHouseGridPoweredRates)
+        # The percentile index is used to select the 50th percentile (index 0) or the low (index 1)
+        # or high (index 2) estimates. Which one we choose changes based on whether we're trying to 
+        # make sure the battery doesn't go flat, or whether we're topping it up and don't want to 
+        # over charge it and end up with a surplus that just goes to the grid. Unless we're explicitly 
+        # being asked to add a topup, we start off with the low estimate as the first passes are to 
+        # ensure the battery doesn't go flat, with later passes topping it up.
+        percentileIndex                     = 2 if topUpToChargeCost else 1
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         maxChargeCost                       = 0
         (batProfile, fullEndTimeThresh,
          fullyCharged, lastFullSlotEndTime, 
-         empty)                             = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)
+         empty)                             = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now, percentileIndex)
         # initialise the allow empty before variable to the start of the profile so it has no effect to start with
         allowEmptyBefore                    = batProfile[0][0]
         maxAllowedChargeCost                = topUpToChargeCost if topUpToChargeCost else math.inf
@@ -690,14 +702,16 @@ class PowerControl(hass.Hass):
             chargeBefore   = None
             firstEmptySlot = None
             if empty:
-                firstEmptySlot = next(filter(lambda x: x[4] and x[0] >= allowEmptyBefore, batProfile), None)
+                percentileIndex = 1
+                firstEmptySlot  = next(filter(lambda x: x[4] and x[0] >= allowEmptyBefore, batProfile), None)
                 if firstEmptySlot:
                     firstEmptySlot = firstEmptySlot[1]
                     chargeBefore   = firstEmptySlot
             else:
+                percentileIndex = 2
                 # If we're topping up the battery to full, then don't add slots after the full theshold end 
                 # time, as they won't actually help meet the full battery criteria.
-                chargeBefore = fullEndTimeThresh
+                chargeBefore    = fullEndTimeThresh
             # Search for a charging slot
             (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPoweredRatesLocal, chargeBefore)                
             if chargeRate:
@@ -719,11 +733,16 @@ class PowerControl(hass.Hass):
                     willCharge = willCharge and chargeRate[1] >= lastFullSlotEndTime
                 if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
-                    power     = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
+                    powerMed  = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1])
+                    powerLow  = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1], 1)
+                    powerHigh = self.powerForPeriod(solarSurplus, chargeRate[0], chargeRate[1], 2)
+                    power     = (powerMed, powerLow, powerHigh)[percentileIndex]
                     # we can only add something to the charge plan if there's surplus solar
                     willCharge = willCharge and power > 0
                     if willCharge:
-                        solarChargingPlan.append((chargeRate[0], chargeRate[1], min(power, maxCharge)))
+                        solarChargingPlan.append((chargeRate[0], chargeRate[1], min(powerMed,  maxCharge), 
+                                                                                min(powerLow,  maxCharge),
+                                                                                min(powerHigh, maxCharge)))
                         # we can only use a charging slot once, so remove it from the available list            
                         availableChargeRates.remove(chargeRate)
                     # We always remove the rate from the local array, otherwise we could end up trying 
@@ -790,10 +809,12 @@ class PowerControl(hass.Hass):
                     # end up using that much grid power as we'd pre-planned it.
                     willCharge = willCharge and belowMaxImportRate
                     if willCharge:
-                        usage = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1])
+                        usage     = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1])
+                        usageLow  = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1], 1)
+                        usageHigh = self.powerForPeriod(usageAfterSolar, chargeRate[0], chargeRate[1], 2)
                         # we can only use a charging slot once, so remove it from the available list
                         availableHouseGridPoweredRates.remove(chargeRate)
-                        houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], usage))
+                        houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], usage, usageLow, usageHigh))
                     # Same reason as above, always remove the local charge rate
                     availableHouseGridPoweredRatesLocal.remove(chargeRate)
                     
@@ -801,7 +822,7 @@ class PowerControl(hass.Hass):
                     maxChargeCost = max(maxChargeCost, chargeCost)
                     # update the battery profile based on the new charging plan
                     (batProfile, _, fullyCharged, 
-                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now)   
+                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now, percentileIndex)   
             elif firstEmptySlot:
                 # If the battery gets empty then the code above we restrict the search for a charging 
                 # slot to the time before it gets empty. This can result in not finding a charge slot. 
@@ -877,8 +898,15 @@ class PowerControl(hass.Hass):
             if solarUsageForRate > 0:
                 newDischargeSlot                  = (mostExpenciveRate[0], mostExpenciveRate[1], solarUsageForRate)
                 adjustBy                          = [newDischargeSlot]
-                newSolarSurplus                   = self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b)
-                newUsageAfterSolar                = self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b)
+                # Create a new adjusted version of the solar suprlus and usage after solar accounting for the
+                # slow we're proposing to discharge in. NOTE: We do this 3 times for the 50th percental and
+                # the low and high estitames of the solar data.
+                newSolarSurplus                   = self.combineSeries(self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b),
+                                                                       self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b, 1, 0),
+                                                                       self.opOnSeries(solarSurplus,    adjustBy, lambda a, b: a+b, 2, 0))
+                newUsageAfterSolar                = self.combineSeries(self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b),
+                                                                       self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b, 1, 0),
+                                                                       self.opOnSeries(usageAfterSolar, adjustBy, lambda a, b: a+b, 2, 0))
                 newAvailableChargeRates           = list(availableChargeRates)
                 newSolarChargingPlan              = list(solarChargingPlan)
                 # We can't change in the slot we're trying to discharge in, so remove this from the trial list.

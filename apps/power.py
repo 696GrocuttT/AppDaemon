@@ -10,7 +10,8 @@ class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
         self.solarForecastMargin          = float(self.args['solarForecastMargin'])
-        self.solarForecastPercentile      = float(self.args['solarForecastPercentile'])
+        self.solarForecastLowPercentile   = float(self.args['solarForecastLowPercentile'])
+        self.solarForecastHighPercentile  = float(self.args['solarForecastHighPercentile'])
         self.houseLoadEntityName          = self.args['houseLoadEntity']
         self.usageDaysHistory             = self.args['usageDaysHistory']
         self.eddiOutputEntityName         = self.args['eddiOutputEntity']
@@ -214,11 +215,12 @@ class PowerControl(hass.Hass):
         prevPower          = None
         prevMetaData       = None
         prevMinEstimate    = None
+        prevMaxEstimate    = None
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
             curStartTime = data[0]
             if prevPower:
-                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMetaData) )
+                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMaxEstimate, prevMetaData) )
             prevStartTime = curStartTime
             # Process the estimates
             percentile10 = data[2]
@@ -229,25 +231,31 @@ class PowerControl(hass.Hass):
             if percentile90:
                 percentile90 = round(percentile90, 3)
             if percentile10 and percentile90:
-                if self.solarForecastPercentile < 50:
-                    prevMinEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastPercentile)
+                if self.solarForecastLowPercentile < 50:
+                    prevMinEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastLowPercentile)
                 else:
-                    prevMinEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastPercentile)
+                    prevMinEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastLowPercentile)
+                if self.solarForecastHighPercentile < 50:
+                    prevMaxEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastHighPercentile)
+                else:
+                    prevMaxEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastHighPercentile)
             else:
                 prevMinEstimate = percentile50 * self.solarForecastMargin
+                prevMaxEstimate = percentile50
             prevMinEstimate = round(prevMinEstimate, 3)
+            prevMaxEstimate = round(prevMaxEstimate, 3)
             prevPower       = round(percentile50, 3)
             prevMetaData    = (percentile10, prevPower, percentile90)
         self.printSeries(timeRangePowerData, "Solar forecast")
         self.solarData = timeRangePowerData
 
 
-    def powerForPeriod(self, data, startTime, endTime):
+    def powerForPeriod(self, data, startTime, endTime, valueIdxOffset=0):
         power = 0.0
         for forecastPeriod in data:
             forecastStartTime = forecastPeriod[0]
             forecastEndTime   = forecastPeriod[1]
-            forecastPower     = forecastPeriod[2]
+            forecastPower     = forecastPeriod[2+valueIdxOffset]
             # is it a complete match
             if startTime <= forecastStartTime and endTime >= forecastEndTime:
                 power = power + forecastPower 
@@ -394,14 +402,16 @@ class PowerControl(hass.Hass):
     def seriesToString(self, series, mergeable=False):
         if mergeable:
             series = self.mergeSeries(series)
-        if series and len(series[0]) > 5:
-            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3} {4} {5}".format(*x), series)
-        elif series and len(series[0]) > 4:
-            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3} {4}".format(*x), series)
-        elif series and len(series[0]) > 3:
-            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f} {3}".format(*x), series)
-        else:
-            strings = map(lambda x: "{0:%d %B %H:%M} -> {1:%H:%M} : {2:.3f}".format(*x), series)
+        formatStr = "{0:%d %B %H:%M} -> {1:%H:%M} :"
+        # Look at the types of the first element of the series to build the rest of the format string
+        if series:
+            for valueIdx in range(2, len(series[0])):
+                # boolean values can be an instance of 'int', so we have to check for bools and exclude them
+                if (isinstance(series[0][valueIdx], float) or isinstance(series[0][valueIdx], int)) and not isinstance(series[0][valueIdx], bool):
+                    formatStr = formatStr + " {{{0}:.3f}}".format(valueIdx)
+                else:
+                    formatStr = formatStr + " {{{0}}}".format(valueIdx)            
+        strings = map(lambda x: formatStr.format(*x), series)
         return "\n".join(strings)
 
 
@@ -409,10 +419,11 @@ class PowerControl(hass.Hass):
         self.log(title + ":\n" + self.seriesToString(series, mergeable))
 
 
-    def opOnSeries(self, a, b, operation):
+    def opOnSeries(self, a, b, operation, aValueIdxOffset=0, bValueIdxOffset=0):
         return list(map(lambda aSample: ( aSample[0], 
-                                     aSample[1], 
-                                     operation(aSample[2], self.powerForPeriod(b, aSample[0], aSample[1])) ),
+                                          aSample[1], 
+                                          operation(aSample[2+aValueIdxOffset], 
+                                                    self.powerForPeriod(b, aSample[0], aSample[1], bValueIdxOffset)) ),
                         a))
 
 
@@ -424,15 +435,33 @@ class PowerControl(hass.Hass):
         return list(filter(lambda x: x[0] < secondsInADay, tariff))
 
 
+    def combineSeries(self, baseSeries, *args):
+        output = []
+        for idx, baseSample in enumerate(baseSeries):
+            outputElement = list(baseSample)
+            for extraSeries in args:
+                outputElement.append(extraSeries[idx][2])
+            output.append(tuple(outputElement))
+        return output
+
+
     def mergeAndProcessData(self, now):
         self.log("Updating schedule")        
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 
-        # we work out the house usage after any forecast solar.
-        solarSurplus    = self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a))
-        solarUsage      = self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a)
-        usageAfterSolar = self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b))
-        
+        # we work out the house usage after any forecast solar. The solar forecast has 3 values in 
+        # the following order, a 50th percentile followed by a low and high estimate of the power 
+        # for each period. We carry this through to the generated series so we can more accuratly 
+        # plan the battery charge / house usage.
+        solarSurplus    = self.combineSeries(self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a)), 
+                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a), 0, 1), 
+                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a), 0, 2))
+        solarUsage      = self.combineSeries(self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a),
+                                             self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a, 1, 1),
+                                             self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a, 2, 2))
+        usageAfterSolar = self.combineSeries(self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b)),
+                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b), 0, 1),
+                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b), 0, 2))
         # Remove rates that are in the past
         exportRateData    = list(filter(lambda x: x[1] >= now, self.exportRateData))
         importRateData    = list(filter(lambda x: x[1] >= now, self.importRateData))

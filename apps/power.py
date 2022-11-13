@@ -216,11 +216,18 @@ class PowerControl(hass.Hass):
         prevMetaData       = None
         prevMinEstimate    = None
         prevMaxEstimate    = None
+        dailyTotals        = {}
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
             curStartTime = data[0]
             if prevPower:
                 timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMaxEstimate, prevMetaData) )
+                prevDate = prevStartTime.date()
+                if prevDate not in dailyTotals:
+                    dailyTotals[prevDate] = [0,0,0]
+                dailyTotals[prevDate][0] = dailyTotals[prevDate][0] + prevPower
+                dailyTotals[prevDate][1] = dailyTotals[prevDate][1] + prevMinEstimate
+                dailyTotals[prevDate][2] = dailyTotals[prevDate][2] + prevMaxEstimate
             prevStartTime = curStartTime
             # Process the estimates
             percentile10 = data[2]
@@ -247,6 +254,9 @@ class PowerControl(hass.Hass):
             prevPower       = round(percentile50, 3)
             prevMetaData    = (percentile10, prevPower, percentile90)
         self.printSeries(timeRangePowerData, "Solar forecast")
+        for totals in dailyTotals:
+            vals = dailyTotals[totals]
+            self.log("Total for {0:%d %B} : {1:.3f} {2:.3f} {3:.3f}".format(totals, vals[0], vals[1], vals[2]))
         self.solarData = timeRangePowerData
 
 

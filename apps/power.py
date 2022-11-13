@@ -594,15 +594,27 @@ class PowerControl(hass.Hass):
                     eddiPlan.append((chargePeriod[0], chargePeriod[1], 0))
         eddiPlan.sort(key=lambda x: x[0])
         return eddiPlan
-    
-    
+ 
+ 
+    def convertToAppPercentage(self, value):
+        # The battery reserves 5% so the battery is never completely empty. This is fudged in 
+        # the app as it shows an adjusted percentage scale. This formula replicates that so we
+        # can directyl compare percentages
+        return (value - 5) / 0.95
+
+
+    def convertToRealPercentage(self, value):
+        # Calculates the inverse of the convertToAppPercentage function
+        return (value * 0.95) + 5
+
+
     def genBatLevelForecast(self, exportRateData, usageAfterSolar, solarChargingPlan, gridChargingPlan, houseGridPoweredPlan, now, percentileIndex):
         batForecast      = []
         # For full charge detection we compare against 99% full, this is so any minor changes 
         # is battery capacity or energe when we're basically fully charged, and won't charge 
         # any more, don't cause any problems.
         batFullPct       = min(self.batFullPct, 99)
-        batReserveEnergy = self.batteryCapacity * (self.batReservePct / 100)
+        batReserveEnergy = self.batteryCapacity * (self.convertToRealPercentage(self.batReservePct) / 100)
         batteryRemaining = self.batteryEnergy
         emptyInAnySlot   = False
         fullInAnySlot    = False
@@ -623,7 +635,7 @@ class PowerControl(hass.Hass):
             if empty:
                 emptyInAnySlot   = True
                 batteryRemaining = batReserveEnergy
-            pct = round((batteryRemaining / self.batteryCapacity) * 100, 1)
+            pct = round(self.convertToAppPercentage((batteryRemaining / self.batteryCapacity) * 100), 1)
             batForecast.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty, pct))
            
         # calculate the end time of the last fully charged slot
@@ -976,7 +988,7 @@ class PowerControl(hass.Hass):
                                                                maxImportRate, topUpMaxCost)    
         maxChargeCost             = max(maxChargeCost, newMaxChargeCost)
 
-        soc = (self.batteryEnergy / self.batteryCapacity) * 100
+        soc = self.convertToAppPercentage((self.batteryEnergy / self.batteryCapacity) * 100)
         self.log("Current battery change {0:.3f}".format(soc))
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Battery change cost {0:.2f}".format(maxChargeCost))

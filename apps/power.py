@@ -443,19 +443,19 @@ class PowerControl(hass.Hass):
 
 
     def seriesToTariff(self, series, midnight):
-        dayStart        = midnight - timedelta(days=1)
-        mergedPlan      = self.mergeSeries(series)
-        mergedPlan      = list(filter(lambda x: x[0] < midnight, mergedPlan))
-        tariff          = []
-        for period in self.mergeSeries(series):
-            startTime = period[0]
-            endTime   = period[1]
-            # Check if the period needs to wrap around midnight
-            if endTime >= midnight:
-                endTime = midnight - timedelta(seconds=1)
-            tariff.append([int((startTime - dayStart).total_seconds()), 
-                           int((endTime   - dayStart).total_seconds())])
-        return tariff
+        mergedPlan    = self.mergeSeries(series)
+        secondsInADay = 24 * 60 * 60
+        tariff        = map(lambda x: [int((x[0] - midnight).total_seconds()),
+                                       int((x[1] - midnight).total_seconds())], mergedPlan)
+        newTariff     = []
+        for period in tariff:
+            start = period[0]
+            end   = period[1]
+            if start < secondsInADay:
+                start = max(start, 0)
+                end   = min(end, secondsInADay-1)
+                newTariff.append([start, end])
+        return newTariff
 
 
     def combineSeries(self, baseSeries, *args):

@@ -4,6 +4,7 @@ from datetime import timedelta
 from datetime import timezone
 import re
 import math
+import numpy
 
 
 class PowerControl(hass.Hass):
@@ -196,10 +197,6 @@ class PowerControl(hass.Hass):
         self.importRateData = self.parseRates(new, "import")
 
 
-    def interpolate(self, x1: float, x2: float, y1: float, y2: float, x: float):
-        return ((y2 - y1) * x + x2 * y1 - x1 * y2) / (x2 - x1)
-
-    
     def parseSolar(self):
         self.log("Updating solar forecast")
         # flatten the forecasts arrays for the different days
@@ -238,14 +235,13 @@ class PowerControl(hass.Hass):
             if percentile90:
                 percentile90 = round(percentile90, 3)
             if percentile10 and percentile90:
-                if self.solarForecastLowPercentile < 50:
-                    prevMinEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastLowPercentile)
-                else:
-                    prevMinEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastLowPercentile)
-                if self.solarForecastHighPercentile < 50:
-                    prevMaxEstimate = self.interpolate(10, 50, percentile10, percentile50, self.solarForecastHighPercentile)
-                else:
-                    prevMaxEstimate = self.interpolate(50, 90, percentile50, percentile90, self.solarForecastHighPercentile)
+                # Extrapolate a polynomial from the percentiles and the fact that we should get 0 power at the 
+                # 0th percentile. Then use the polynomial to generate the percentiles we need.
+                forecastPercentiles = [0, 10, 50, 90]
+                forecastValues      = [0, percentile10, percentile50, percentile90]
+                polyLine            = numpy.poly1d(numpy.polyfit(forecastPercentiles, forecastValues, 3))
+                prevMinEstimate     = polyLine(self.solarForecastLowPercentile)
+                prevMaxEstimate     = polyLine(self.solarForecastHighPercentile)
             else:
                 prevMinEstimate = percentile50 * self.solarForecastMargin
                 prevMaxEstimate = percentile50

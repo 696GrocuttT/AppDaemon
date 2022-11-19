@@ -38,9 +38,12 @@ class SystemMonitor(hass.Hass):
                     if nameMatch:
                         frendlyName = nameMatch.group(1)
                     invertTrigger = monEntity.get('invertTrigger', False)
+                    condition     = monEntity.get('condition', None)
                     monDict = {"value":         self.get_state(entity, attribute=attribName),
+                               "entity":        entity,
                                "name":          frendlyName,
-                               "invertTrigger": invertTrigger}
+                               "invertTrigger": invertTrigger, 
+                               "condition":     condition}
                     for cfgItem in ["triggerValue", "message", "priority"]:
                         monDict[cfgItem] = monEntity[cfgItem]
                     self.monList.append(monDict)
@@ -74,7 +77,9 @@ class SystemMonitor(hass.Hass):
         curAlertLevel = 0
         for entityDict in self.monList:
             valueMatch = entityDict["value"] == entityDict["triggerValue"]
-            if valueMatch != entityDict["invertTrigger"]:
+            # If there's an extra condition to evaluate, do that now
+            condition = eval(entityDict["condition"]) if entityDict["condition"] else True
+            if (valueMatch != entityDict["invertTrigger"]) and condition:
                 message           = entityDict["message"].replace("%name%", entityDict["name"])
                 priority          = entityDict["priority"]
                 messages[message] = priority

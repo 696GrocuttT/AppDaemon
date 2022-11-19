@@ -5,6 +5,8 @@ from datetime import timezone
 import re
 import math
 import numpy
+import json
+import os.path
 
 
 class PowerControl(hass.Hass):
@@ -33,6 +35,7 @@ class PowerControl(hass.Hass):
         self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
         self.batFullPctHysteresis         = 3
         self.batEfficiency                = 0.9
+        self.solarActualsFileName         = "/conf/solarActuals.json" 
         
         self.solarData            = []
         self.exportRateData       = []
@@ -51,6 +54,12 @@ class PowerControl(hass.Hass):
                                      'export': {},
                                      'import': {0.6742669499999999: 0.4435, 
                                                 0.2551668:          0.1489} }
+                                                
+        # Leads the solar actuals if there's available
+        self.solarActuals = {}
+        if os.path.isfile(self.solarActualsFileName):
+            with open(self.solarActualsFileName) as file:
+                self.solarActuals = dict(map(lambda x: (int(x[0]), x[1]), json.load(file).items()))
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -152,6 +161,24 @@ class PowerControl(hass.Hass):
         self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":       self.planUpdateTime,
                                                                                           "stateUpdateTime":      now,
                                                                                           "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
+        # Update the solar actuals and tuning
+        self.updateSolarActuals(now)
+
+
+    def updateSolarActuals(self, now):
+        # Add any current estimated actuals to the main history array
+        for solarSample in self.solarData:
+            if solarSample[0] < now:
+                startTime = int(solarSample[0].timestamp())
+                endTime   = int(solarSample[1].timestamp())
+                self.solarActuals[startTime] = [endTime, solarSample[2]]
+        # Filter out any really old samples
+        discardTime       = (now - timedelta(days=14)).timestamp()
+        self.solarActuals = dict(filter(lambda x: x[0] > discardTime, self.solarActuals.items()))
+
+        # Save the new data off to a file so we preserve it accross restarts    
+        with open(self.solarActualsFileName, 'w') as file:
+            json.dump(self.solarActuals, file, ensure_ascii=False)
 
 
     def toFloat(self, string, default):

@@ -19,6 +19,7 @@ class PowerControl(hass.Hass):
         self.usageDaysHistory             = self.args['usageDaysHistory']
         self.eddiOutputEntityName         = self.args['eddiOutputEntity']
         self.eddiPowerUsedTodayEntityName = self.args['eddiPowerUsedTodayEntity']
+        self.solarLifetimeProdEntityName  = self.args['solarLifetimeProductionEntity']
         self.batteryModeOutputEntityName  = self.args['batteryModeOutputEntity']
         self.batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
         self.batOutputTimeOffset          = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
@@ -35,31 +36,42 @@ class PowerControl(hass.Hass):
         self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
         self.batFullPctHysteresis         = 3
         self.batEfficiency                = 0.9
+        self.solarTuningDaysHistory       = 14
         self.solarActualsFileName         = "/conf/solarActuals.json" 
+        self.solarProductionFileName      = "/conf/solarProduction.json" 
         
-        self.solarData            = []
-        self.exportRateData       = []
-        self.importRateData       = []
-        self.usageData            = []
-        self.rawSolarData         = []
-        self.solarChargingPlan    = []
-        self.gridChargingPlan     = []
-        self.houseGridPoweredPlan = []
-        self.standbyPlan          = []
-        self.dischargePlan        = []
-        self.dischargeToHousePlan = []
-        self.eddiPlan             = []
-        self.planUpdateTime       = None
-        self.tariffOverrides      = {'gas':    {0.1473675: 0.1031},
-                                     'export': {},
-                                     'import': {0.6742669499999999: 0.4435, 
-                                                0.2551668:          0.1489} }
-                                                
+        self.solarData                 = []
+        self.exportRateData            = []
+        self.importRateData            = []
+        self.usageData                 = []
+        self.rawSolarData              = []
+        self.solarChargingPlan         = []
+        self.gridChargingPlan          = []
+        self.houseGridPoweredPlan      = []
+        self.standbyPlan               = []
+        self.dischargePlan             = []
+        self.dischargeToHousePlan      = []
+        self.eddiPlan                  = []
+        self.planUpdateTime            = None
+        self.prevSolarLifetimeProd     = None
+        self.prevSolarLifetimeProdTime = None
+        self.tariffOverrides           = {'gas':    {0.1473675: 0.1031},
+                                          'export': {},
+                                          'import': {0.6742669499999999: 0.4435, 
+                                                     0.2551668:          0.1489} }
+
         # Leads the solar actuals if there's available
         self.solarActuals = {}
         if os.path.isfile(self.solarActualsFileName):
             with open(self.solarActualsFileName) as file:
                 self.solarActuals = dict(map(lambda x: (int(x[0]), x[1]), json.load(file).items()))
+        # Do the same for the solar production
+        self.solarProduction = []
+        if os.path.isfile(self.solarProductionFileName):
+            with open(self.solarProductionFileName) as file:
+                self.solarProduction = list(map(lambda x: (datetime.fromtimestamp(int(x[0])), 
+                                                           datetime.fromtimestamp(int(x[1])),
+                                                           x[2]), json.load(file)))                
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -91,13 +103,39 @@ class PowerControl(hass.Hass):
         self.listen_state(self.gasRateChanged, gasRateEntityName) 
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
-        # Schedule an the output update of the 30 mintues, on the half hour boundary
+        # Schedule the solar production recording and output update for 30 mintues, on the half hour boundary.
+        # The output update is offset by a little so its just before the Tesla batch update so the settings
+        # don't get delayed until the next update.
         now       = datetime.now() 
+        period    = timedelta(minutes=30)
+        startTime = now.replace(minute=0, second=0, microsecond=0)
+        while startTime < now:
+            startTime = startTime + period
+        self.run_every(self.recordSolarProduction, startTime, 30*60)
         startTime = now.replace(minute=0, second=0, microsecond=0) + self.batOutputTimeOffset
         while startTime < now:
-            startTime = startTime + timedelta(minutes=30)
+            startTime = startTime + period
         self.run_every(self.updateOutputs, startTime, 30*60)
         
+
+    def recordSolarProduction(self, kwargs):
+        curSolarLifetimeProd     = float(self.get_state(self.solarLifetimeProdEntityName))
+        curSolarLifetimeProdTime = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo)
+        curSolarLifetimeProdTime = curSolarLifetimeProdTime.replace(second=0, microsecond=0)
+        self.log("Solar production: " + str(self.prevSolarLifetimeProd) + " -> "+ str(curSolarLifetimeProd) )
+        if self.prevSolarLifetimeProd != None:
+            production = curSolarLifetimeProd - self.prevSolarLifetimeProd
+            if production:
+                self.solarProduction.append((self.prevSolarLifetimeProdTime, curSolarLifetimeProdTime, production))
+                # Output the updated data to the file for long term persistence
+                with open(self.solarProductionFileName, 'w') as file:
+                    saveData = list(map(lambda x: (x[0].timestamp(), x[1].timestamp(), x[2]), self.solarProduction))
+                    json.dump(saveData, file, ensure_ascii=False)
+                
+        # Rotate the vars for next time
+        self.prevSolarLifetimeProd     = curSolarLifetimeProd
+        self.prevSolarLifetimeProdTime = curSolarLifetimeProdTime
+            
 
     def updateOutputs(self, kwargs):
         self.log("Updating outputs")
@@ -161,24 +199,34 @@ class PowerControl(hass.Hass):
         self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":       self.planUpdateTime,
                                                                                           "stateUpdateTime":      now,
                                                                                           "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
-        # Update the solar actuals and tuning
-        self.updateSolarActuals(now)
+        # Update the solar actuals and tuning at the end of the day
+        if now.hour == 23 and now.minute > 15 and now.minute < 45:
+            self.updateSolarActuals(now)
 
 
     def updateSolarActuals(self, now):
-        # Add any current estimated actuals to the main history array
+        # Add any current estimated actuals to the main history dict. We do most of the storage 
+        # and manipulation as a dict so its quick to insert, delete, and search for items.
         for solarSample in self.solarData:
             if solarSample[0] < now:
                 startTime = int(solarSample[0].timestamp())
                 endTime   = int(solarSample[1].timestamp())
                 self.solarActuals[startTime] = [endTime, solarSample[2]]
         # Filter out any really old samples
-        discardTime       = (now - timedelta(days=14)).timestamp()
-        self.solarActuals = dict(filter(lambda x: x[0] > discardTime, self.solarActuals.items()))
-
+        discardTime = (now - timedelta(days=self.solarTuningDaysHistory)).timestamp()
+        for key in self.solarActuals.keys():
+            if key < discardTime:
+                del self.solarActuals[key] 
+        
         # Save the new data off to a file so we preserve it accross restarts    
         with open(self.solarActualsFileName, 'w') as file:
             json.dump(self.solarActuals, file, ensure_ascii=False)
+
+        # Convert to a series array so we can use all the normal utilitiy functions
+        solarActualsSeries = list(map(lambda x: (datetime.fromtimestamp(x[0]), 
+                                                 datetime.fromtimestamp(x[1][0]), 
+                                                 x[1][1]), self.solarActuals.items()))
+        solarActualsSeries.sort(key=lambda x: x[0])
 
 
     def toFloat(self, string, default):
@@ -1020,9 +1068,9 @@ class PowerControl(hass.Hass):
         maxChargeCost             = max(maxChargeCost, newMaxChargeCost)
 
         soc = self.convertToAppPercentage((self.batteryEnergy / self.batteryCapacity) * 100)
-        self.log("Current battery change {0:.3f}".format(soc))
+        self.log("Current battery charge {0:.3f}".format(soc))
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
-        self.log("Battery change cost {0:.2f}".format(maxChargeCost))
+        self.log("Max battery charge cost {0:.2f}".format(maxChargeCost))
         self.printSeries(batProfile, "Battery profile - post topup")
         # calculate the pre-eddi export profile. Remote charging power and surplus outside the period we
         # have export rates for (because we won't have a plan for those periods yet).

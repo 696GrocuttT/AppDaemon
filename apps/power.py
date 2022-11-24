@@ -55,10 +55,9 @@ class PowerControl(hass.Hass):
         self.planUpdateTime            = None
         self.prevSolarLifetimeProd     = None
         self.prevSolarLifetimeProdTime = None
-        self.tariffOverrides           = {'gas':    {0.1473675: 0.1031},
+        self.tariffOverrides           = {'gas':    {},
                                           'export': {},
-                                          'import': {0.6742669499999999: 0.4435, 
-                                                     0.2551668:          0.1489} }
+                                          'import': {}}
 
         # Leads the solar actuals if there's available
         self.solarActuals = {}

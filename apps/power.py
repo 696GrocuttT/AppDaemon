@@ -1,10 +1,12 @@
 import hassapi as hass
-from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
+from datetime   import datetime
+from datetime   import timedelta
+from datetime   import timezone
+from statistics import mean
 import re
 import math
 import numpy
+import matplotlib.pyplot as plt
 import json
 import os.path
 
@@ -201,7 +203,55 @@ class PowerControl(hass.Hass):
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)
+        self.updateSolarTuning()
 
+
+    def updateSolarTuning(self):
+        # Convert to a series array so we can use all the normal utilitiy functions
+        solarActualsSeries = list(map(lambda x: (datetime.fromtimestamp(x[0]), 
+                                                 datetime.fromtimestamp(x[1][0]), 
+                                                 x[1][1]), self.solarActuals.items()))
+        solarActualsSeries.sort(key=lambda x: x[0])
+
+        # pass the production values through a operation so we get a series that's got the same number of elements
+        # (and for the same times) as the actuals series. Then combine it with the estimated actuals series.
+        pairedValues = self.combineSeries(solarActualsSeries,
+                                          self.opOnSeries(solarActualsSeries, self.solarProduction, lambda a, b: b))
+        # Combine all the samples for each timeslot
+        timeSlots = {}
+        for pair in pairedValues:
+            key             = (pair[0].astimezone().replace(year=2000, month=1, day=1), 
+                               pair[1].astimezone().replace(year=2000, month=1, day=1))
+            if key not in timeSlots:
+                timeSlots[key] = []
+            timeSlots[key].append((pair[2], pair[3]))
+        
+        for key, data in timeSlots.items():
+            errorPcts = map(lambda  x: (((x[1]-x[0]) * 100) / x[0]) if x[0] else 0, data)
+            data = list(filter(lambda x: x[0] and x[1], data))
+            avg              = mean(map(lambda  x: x[1] / x[0] if x[0] else 0, data))
+            estimatedActuals = list(map(lambda x: x[0], data))
+            production       = list(map(lambda x: x[1], data))
+            
+            model = numpy.poly1d(numpy.polyfit(estimatedActuals, production, 1))
+            model2 = numpy.poly1d([avg,0])
+
+            polyline = numpy.linspace(0, max(estimatedActuals), 50) 
+            plt.scatter(estimatedActuals, production)
+            plt.plot(polyline, model(polyline))
+            plt.plot(polyline, model2(polyline))
+            
+            name = "/conf/plot_{0:%H-%M}.png".format(key[0])
+            plt.savefig(name)
+            plt.close()
+            #self.log(name)
+            #self.log("\n\n")
+
+
+
+
+        
+    
 
     def updateSolarActuals(self, now):
         # Add any current estimated actuals to the main history dict. We do most of the storage 
@@ -220,12 +270,6 @@ class PowerControl(hass.Hass):
         # Save the new data off to a file so we preserve it accross restarts    
         with open(self.solarActualsFileName, 'w') as file:
             json.dump(self.solarActuals, file, ensure_ascii=False)
-
-        # Convert to a series array so we can use all the normal utilitiy functions
-        solarActualsSeries = list(map(lambda x: (datetime.fromtimestamp(x[0]), 
-                                                 datetime.fromtimestamp(x[1][0]), 
-                                                 x[1][1]), self.solarActuals.items()))
-        solarActualsSeries.sort(key=lambda x: x[0])
 
 
     def toFloat(self, string, default):

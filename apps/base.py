@@ -65,12 +65,13 @@ class BasicInactiveAutoOff(hass.Hass):
         # If the input entity isn't already on, trigger fake an on then off sequence
         if self.get_state(self.inputEntityName) == "off":
             self.log("Triggered from input event")
-            self.input_changed(None, None, "off", "on", None)
-            self.input_changed(None, None, "on", "off", None)
+            self.input_changed(None, None, "off", "on", {"fromEvent": True})
+            self.input_changed(None, None, "on", "off", {"fromEvent": True})
 
 
     def input_changed(self, entity, attribute, old, new, kwargs):
-        self.log("input " + old + " --> " + new + ". auto " + str(self.auto))
+        self.log("input " + old + " --> " + new + ". auto " + str(self.auto) + " args \"" +str(kwargs) + "\"")
+        fromEvent = kwargs.get("fromEvent", False) if kwargs else False
         # if there's a running timer, cancel it
         if self.timer:
             if self.timer_running(self.timer):
@@ -78,7 +79,7 @@ class BasicInactiveAutoOff(hass.Hass):
         if new == "on":
             # Only turn on the output if its off, and its not recently been manually turned off
             if ( self.get_state(self.outputEntityName) == "off" and 
-                 (self.auto or (datetime.now() - self.outputLastChanged) > self.manualOffToAutoDelay) ):
+                 (self.auto or fromEvent or (datetime.now() - self.outputLastChanged) > self.manualOffToAutoDelay) ):
                 # Evaluate any additional conditions
                 if self.evalConditions(self.extraOnConditions): 
                     self.pendingAuto = True

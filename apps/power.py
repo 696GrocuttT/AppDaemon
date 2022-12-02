@@ -8,7 +8,7 @@ import math
 import numpy
 import matplotlib.pyplot as plt
 import json
-import os.path
+import os
 
 
 class PowerControl(hass.Hass):
@@ -41,6 +41,7 @@ class PowerControl(hass.Hass):
         self.solarTuningDaysHistory       = 14
         self.solarActualsFileName         = "/conf/solarActuals.json" 
         self.solarProductionFileName      = "/conf/solarProduction.json" 
+        self.solarTuningPath              = "/conf/solarTuning"
         
         self.solarData                 = []
         self.exportRateData            = []
@@ -57,6 +58,7 @@ class PowerControl(hass.Hass):
         self.planUpdateTime            = None
         self.prevSolarLifetimeProd     = None
         self.prevSolarLifetimeProdTime = None
+        self.solarTuningModels         = {}
         self.tariffOverrides           = {'gas':    {},
                                           'export': {},
                                           'import': {}}
@@ -202,8 +204,10 @@ class PowerControl(hass.Hass):
                                                                                           "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
+            pass
+        if True:
             self.updateSolarActuals(now)
-        self.updateSolarTuning()
+            self.updateSolarTuning()
 
 
     def updateSolarTuning(self):
@@ -226,31 +230,29 @@ class PowerControl(hass.Hass):
                 timeSlots[key] = []
             timeSlots[key].append((pair[2], pair[3]))
         
+        # Make sure the plot output dir exists
+        if not os.path.exists(self.solarTuningPath):
+            os.mkdir(self.solarTuningPath)
+        # Now go through each time slot and creaty a model that best fits the data
+        models = {}
         for key, data in timeSlots.items():
-            errorPcts = map(lambda  x: (((x[1]-x[0]) * 100) / x[0]) if x[0] else 0, data)
-            data = list(filter(lambda x: x[0] and x[1], data))
-            avg              = mean(map(lambda  x: x[1] / x[0] if x[0] else 0, data))
+            # Filter out obviously wrong values and seperate out the data, and fit the model
+            data             = list(filter(lambda x: x[0] < 0.75 or x[1], data))            
             estimatedActuals = list(map(lambda x: x[0], data))
             production       = list(map(lambda x: x[1], data))
-            
-            model = numpy.poly1d(numpy.polyfit(estimatedActuals, production, 1))
-            model2 = numpy.poly1d([avg,0])
-
+            model            = numpy.poly1d(numpy.polyfit(estimatedActuals, production, 1))
+            # Don't publish the model to use in turing forecasts if we don't have many points
+            if len(data) > 5:
+                models[key] = model            
+            # Now we have the model, plot and save a small graph showing the tuning profile
             polyline = numpy.linspace(0, max(estimatedActuals), 50) 
             plt.scatter(estimatedActuals, production)
             plt.plot(polyline, model(polyline))
-            plt.plot(polyline, model2(polyline))
-            
-            name = "/conf/plot_{0:%H-%M}.png".format(key[0])
-            plt.savefig(name)
+            plt.savefig(self.solarTuningPath + "/{0:%H-%M}.png".format(key[0]))
             plt.close()
-            #self.log(name)
-            #self.log("\n\n")
-
-
-
-
         
+        # Update the global models
+        self.solarTuningModels = models
     
 
     def updateSolarActuals(self, now):

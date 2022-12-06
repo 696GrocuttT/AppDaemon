@@ -72,8 +72,8 @@ class PowerControl(hass.Hass):
         self.solarProduction = []
         if os.path.isfile(self.solarProductionFileName):
             with open(self.solarProductionFileName) as file:
-                self.solarProduction = list(map(lambda x: (datetime.fromtimestamp(int(x[0])), 
-                                                           datetime.fromtimestamp(int(x[1])),
+                self.solarProduction = list(map(lambda x: (datetime.fromtimestamp(int(x[0])).astimezone(timezone.utc), 
+                                                           datetime.fromtimestamp(int(x[1])).astimezone(timezone.utc),
                                                            x[2]), json.load(file)))                
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
@@ -212,8 +212,8 @@ class PowerControl(hass.Hass):
 
     def updateSolarTuning(self):
         # Convert to a series array so we can use all the normal utilitiy functions
-        solarActualsSeries = list(map(lambda x: (datetime.fromtimestamp(x[0]), 
-                                                 datetime.fromtimestamp(x[1][0]), 
+        solarActualsSeries = list(map(lambda x: (datetime.fromtimestamp(x[0]).astimezone(timezone.utc), 
+                                                 datetime.fromtimestamp(x[1][0]).astimezone(timezone.utc), 
                                                  x[1][1]), self.solarActuals.items()))
         solarActualsSeries.sort(key=lambda x: x[0])
 
@@ -224,8 +224,8 @@ class PowerControl(hass.Hass):
         # Combine all the samples for each timeslot
         timeSlots = {}
         for pair in pairedValues:
-            key             = (pair[0].astimezone().replace(year=2000, month=1, day=1), 
-                               pair[1].astimezone().replace(year=2000, month=1, day=1))
+            key = (pair[0].astimezone().replace(year=2000, month=1, day=1), 
+                   pair[1].astimezone().replace(year=2000, month=1, day=1))
             if key not in timeSlots:
                 timeSlots[key] = []
             timeSlots[key].append((pair[2], pair[3]))
@@ -265,7 +265,7 @@ class PowerControl(hass.Hass):
                 self.solarActuals[startTime] = [endTime, solarSample[2]]
         # Filter out any really old samples
         discardTime = (now - timedelta(days=self.solarTuningDaysHistory)).timestamp()
-        for key in self.solarActuals.keys():
+        for key in list(self.solarActuals.keys()):
             if key < discardTime:
                 del self.solarActuals[key] 
         
@@ -310,11 +310,13 @@ class PowerControl(hass.Hass):
 
     
     def exportRatesChanged(self, entity, attribute, old, new, kwargs):
-        self.exportRateData = self.parseRates(new, "export")
+        if new:
+            self.exportRateData = self.parseRates(new, "export")
 
 
     def importRatesChanged(self, entity, attribute, old, new, kwargs):
-        self.importRateData = self.parseRates(new, "import")
+        if new:
+            self.importRateData = self.parseRates(new, "import")
 
 
     def parseSolar(self):

@@ -75,6 +75,7 @@ class PowerControl(hass.Hass):
                 self.solarProduction = list(map(lambda x: (datetime.fromtimestamp(int(x[0])).astimezone(timezone.utc), 
                                                            datetime.fromtimestamp(int(x[1])).astimezone(timezone.utc),
                                                            x[2]), json.load(file)))                
+        self.updateSolarTuning()
         # Setup getting the solar forecast data
         solarTodayEntityName    = self.args['solarForecastTodayEntity']
         solarTomorrowEntityName = self.args['solarForecastTomorrowEntity']
@@ -224,8 +225,8 @@ class PowerControl(hass.Hass):
         # Combine all the samples for each timeslot
         timeSlots = {}
         for pair in pairedValues:
-            key = (pair[0].astimezone().replace(year=2000, month=1, day=1), 
-                   pair[1].astimezone().replace(year=2000, month=1, day=1))
+            key = (pair[0].replace(year=2000, month=1, day=1), 
+                   pair[1].replace(year=2000, month=1, day=1))
             if key not in timeSlots:
                 timeSlots[key] = []
             timeSlots[key].append((pair[2], pair[3]))
@@ -242,13 +243,13 @@ class PowerControl(hass.Hass):
             production       = list(map(lambda x: x[1], data))
             model            = numpy.poly1d(numpy.polyfit(estimatedActuals, production, 1))
             # Don't publish the model to use in turing forecasts if we don't have many points
-            if len(data) > 5:
+            if len(data) >= 7:
                 models[key] = model            
             # Now we have the model, plot and save a small graph showing the tuning profile
             polyline = numpy.linspace(0, max(estimatedActuals), 50) 
             plt.scatter(estimatedActuals, production)
             plt.plot(polyline, model(polyline))
-            plt.savefig(self.solarTuningPath + "/{0:%H-%M}.png".format(key[0]))
+            plt.savefig(self.solarTuningPath + "/{0:%H-%M}.png".format(key[0].astimezone()))
             plt.close()
         
         # Update the global models
@@ -340,6 +341,15 @@ class PowerControl(hass.Hass):
         for data in powerData:
             curStartTime = data[0]
             if prevPower:
+                # Calculate a new set of predictions based on the tuned solar models
+                key   = (prevStartTime.astimezone(timezone.utc).replace(year=2000, month=1, day=1), 
+                         curStartTime.astimezone(timezone.utc).replace(year=2000, month=1, day=1))
+                model = self.solarTuningModels.get(key)
+                if model:
+                    prevPower       = round(model(prevPower), 3)
+                    prevMinEstimate = round(model(prevMinEstimate), 3)
+                    prevMaxEstimate = round(model(prevMaxEstimate), 3)
+                # Update the outputs
                 timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMaxEstimate, prevMetaData) )
                 prevDate = prevStartTime.date()
                 if prevDate not in dailyTotals:
@@ -347,6 +357,7 @@ class PowerControl(hass.Hass):
                 dailyTotals[prevDate][0] = dailyTotals[prevDate][0] + prevPower
                 dailyTotals[prevDate][1] = dailyTotals[prevDate][1] + prevMinEstimate
                 dailyTotals[prevDate][2] = dailyTotals[prevDate][2] + prevMaxEstimate
+                
             prevStartTime = curStartTime
             # Process the estimates
             percentile10 = data[2]

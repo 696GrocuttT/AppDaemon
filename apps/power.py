@@ -88,12 +88,12 @@ class PowerControl(hass.Hass):
         exportRateEntityName = self.args['exportRateEntity']
         rawRateData          = self.get_state(exportRateEntityName, attribute='rates')
         self.listen_state(self.exportRatesChanged, exportRateEntityName, attribute='rates') 
-        self.exportRateData  = self.parseRates(rawRateData, "export")
+        self.exportRateData  = self.parseRates(rawRateData, "export") or []
         # same again for the import rate
         importRateEntityName = self.args['importRateEntity']
         rawRateData          = self.get_state(importRateEntityName, attribute='rates')
         self.listen_state(self.importRatesChanged, importRateEntityName, attribute='rates') 
-        self.importRateData  = self.parseRates(rawRateData, "import")
+        self.importRateData  = self.parseRates(rawRateData, "import") or []
         # Setup getting batter stats        
         batteryCapacityEntityName = self.args['batteryCapacity']
         batteryEnergyEntityName   = self.args['batteryEnergy']
@@ -312,12 +312,16 @@ class PowerControl(hass.Hass):
     
     def exportRatesChanged(self, entity, attribute, old, new, kwargs):
         if new:
-            self.exportRateData = self.parseRates(new, "export")
+            newRates = self.parseRates(new, "export")
+            if newRates:
+                self.exportRateData = newRates
 
 
     def importRatesChanged(self, entity, attribute, old, new, kwargs):
         if new:
-            self.importRateData = self.parseRates(new, "import")
+            newRates = self.parseRates(new, "import")
+            if newRates:
+                self.importRateData = newRates
 
 
     def parseSolar(self):
@@ -416,16 +420,18 @@ class PowerControl(hass.Hass):
 
     def parseRates(self, rawRateData, type):
         self.log("Updating " + type + " tariff rates")
-        rateData = list(map(lambda x: (datetime.fromisoformat(x['from']).astimezone(),
-                                       datetime.fromisoformat(x['to']).astimezone(), 
-                                       x['rate']/100), 
-                            rawRateData))
-        override = self.tariffOverrides[type]
-        if override:
-            rateData = list(map(lambda x: (x[0], x[1], override.get(x[2], x[2])), 
-                                rateData))
-        rateData.sort(key=lambda x: x[0])    
-        self.printSeries(rateData, "Rate data (" + type + ")")
+        rateData = None
+        if rawRateData:
+            rateData = list(map(lambda x: (datetime.fromisoformat(x['from']).astimezone(),
+                                           datetime.fromisoformat(x['to']).astimezone(), 
+                                           x['rate']/100), 
+                                rawRateData))
+            override = self.tariffOverrides[type]
+            if override:
+                rateData = list(map(lambda x: (x[0], x[1], override.get(x[2], x[2])), 
+                                    rateData))
+            rateData.sort(key=lambda x: x[0])    
+            self.printSeries(rateData, "Rate data (" + type + ")")
         return rateData
 
 

@@ -64,6 +64,15 @@ class SystemMonitor(hass.Hass):
                     else:
                         self.listen_state(self.state_changed, entity, attribute=attribName, kwargs=len(self.monList)-1)
         self.update_warning_strings()
+
+        # Also schedule an hourly update of the alert to make sure any changes to the alert 
+        # threshold over time get reflected
+        now       = datetime.now() 
+        period    = timedelta(minutes=60)
+        startTime = now.replace(minute=0, second=0, microsecond=0)
+        while startTime < now:
+            startTime = startTime + period
+        self.run_every(self.update_warning_strings, startTime, 60*60)
     
 
     def state_changed(self, entity, attribute, old, new, kwargs):
@@ -90,7 +99,7 @@ class SystemMonitor(hass.Hass):
         self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
         if self.alertEntity:
             now       = datetime.now()
-            isDay     = (now.hour > 7) and (now.hour < 22)
+            isDay     = (now.hour > 6) and (now.hour < 22)
             threshold = 5 if isDay else 8
             alert     = curAlertLevel > threshold
             if (curAlertLevel > self.alertLevel) or not alert or (self.prevAlertTheshold != threshold):

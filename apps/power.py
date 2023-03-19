@@ -205,8 +205,6 @@ class PowerControl(hass.Hass):
                                                                                           "plan":                 self.seriesToString(self.eddiPlan, mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
-            pass
-        if True:
             self.updateSolarActuals(now)
             self.updateSolarTuning()
 

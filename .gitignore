@@ -1,4 +1,6 @@
 *__pycache__*
+._*
+.DS_Store
 logs/
 stateSaves/
 solarTuning/

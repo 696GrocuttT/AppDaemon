@@ -42,6 +42,7 @@ class PowerControl(hass.Hass):
         self.prevSolarLifetimeProdTime    = None
         self.solarTuningModels            = {}
         self.rawSolarData                 = []
+        self.solarDataUntuned             = []
         self.tariffOverrides              = {'gas':    {},
                                              'export': {},
                                              'import': {}}
@@ -135,6 +136,7 @@ class PowerControl(hass.Hass):
         self.core.maxChargeCost      = maxChargeCost
         self.core.eddiPowerUsedToday = self.core.toFloat(self.get_state(self.eddiPowerUsedTodayEntityName), 0)
         self.core.mergeAndProcessData(now)
+        self.core.save()
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
         # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.
@@ -246,7 +248,7 @@ class PowerControl(hass.Hass):
     def updateSolarActuals(self, now):
         # Add any current estimated actuals to the main history dict. We do most of the storage 
         # and manipulation as a dict so its quick to insert, delete, and search for items.
-        for solarSample in self.core.solarData:
+        for solarSample in self.solarDataUntuned:
             if solarSample[0] < now:
                 startTime = int(solarSample[0].timestamp())
                 endTime   = int(solarSample[1].timestamp())
@@ -314,13 +316,14 @@ class PowerControl(hass.Hass):
                                            x.get('pv_estimate90')), 
                                 flatForecast))
         powerData.sort(key=lambda x: x[0])
-        timeRangePowerData = []
-        prevStartTime      = None
-        prevPower          = None
-        prevMetaData       = None
-        prevMinEstimate    = None
-        prevMaxEstimate    = None
-        dailyTotals        = {}
+        timeRangeTunedPowerData   = []
+        timeRangeUntunedPowerData = []
+        prevStartTime             = None
+        prevPower                 = None
+        prevMetaData              = None
+        prevMinEstimate           = None
+        prevMaxEstimate           = None
+        dailyTotals               = {}
         # Reformat the data so we end up with a tuple with elements (startTime, end , power)
         for data in powerData:
             curStartTime = data[0]
@@ -329,12 +332,14 @@ class PowerControl(hass.Hass):
                 key   = (prevStartTime.astimezone(timezone.utc).replace(year=2000, month=1, day=1), 
                          curStartTime.astimezone(timezone.utc).replace(year=2000, month=1, day=1))
                 model = self.solarTuningModels.get(key)
+                prevPowerUntuned = prevPower
                 if model:
-                    prevPower       = round(model(prevPower), 3)
-                    prevMinEstimate = round(model(prevMinEstimate), 3)
-                    prevMaxEstimate = round(model(prevMaxEstimate), 3)
+                    prevPower       = round(max(model(prevPower),       0), 3)
+                    prevMinEstimate = round(max(model(prevMinEstimate), 0), 3)
+                    prevMaxEstimate = round(max(model(prevMaxEstimate), 0), 3)
                 # Update the outputs
-                timeRangePowerData.append( (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMaxEstimate, prevMetaData) )
+                timeRangeUntunedPowerData.append( (prevStartTime, curStartTime, prevPowerUntuned) )
+                timeRangeTunedPowerData.append(   (prevStartTime, curStartTime, prevPower, prevMinEstimate, prevMaxEstimate, prevMetaData) )
                 prevDate = prevStartTime.date()
                 if prevDate not in dailyTotals:
                     dailyTotals[prevDate] = [0,0,0]
@@ -366,11 +371,12 @@ class PowerControl(hass.Hass):
             prevMaxEstimate = round(prevMaxEstimate, 3)
             prevPower       = round(percentile50, 3)
             prevMetaData    = (percentile10, prevPower, percentile90)
-        self.core.printSeries(timeRangePowerData, "Solar forecast")
+        self.core.printSeries(timeRangeTunedPowerData, "Solar forecast")
         for totals in dailyTotals:
             vals = dailyTotals[totals]
             self.log("Total for {0:%d %B} : {1:.3f} {2:.3f} {3:.3f}".format(totals, vals[0], vals[1], vals[2]))
-        self.core.solarData = timeRangePowerData
+        self.solarDataUntuned = timeRangeUntunedPowerData
+        self.core.solarData   = timeRangeTunedPowerData
 
 
     def parseRates(self, rawRateData, type):

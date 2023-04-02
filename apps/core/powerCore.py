@@ -14,35 +14,34 @@ import sys
 
 class PowerControlCore():
     def __init__(self, args, log):
-        self.log                          = log
-        self.args                         = args
-        self.maxChargeRate                = float(args['batteryChargeRateLimit'])
-        self.batteryGridChargeRate        = float(args['batteryGridChargeRate'])
-        self.batReservePct                = float(args['batteryReservePercentage'])
-        self.batFullPct                   = float(args['batteryFullPercentage'])
-        self.gasEfficiency                = float(args['gasHotWaterEfficiency'])
-        self.eddiTargetPower              = float(args['eddiTargetPower'])
-        self.eddiPowerLimit               = float(args['eddiPowerLimit'])
-        self.minBuySelMargin              = float(args['minBuySelMargin'])
-        self.minBuyUseMargin              = float(args['minBuyUseMargin'])
-        self.gasRate                      = 0
-        self.batFullPctHysteresis         = 3
-        self.batEfficiency                = 0.9
-        self.futureTimeWindowHours        = 48
-        self.stateSavesPath               = "/conf/stateSaves"        
-
-        self.solarData                 = []
-        self.exportRateData            = []
-        self.importRateData            = []
-        self.usageData                 = []
-        self.solarChargingPlan         = []
-        self.gridChargingPlan          = []
-        self.houseGridPoweredPlan      = []
-        self.standbyPlan               = []
-        self.dischargePlan             = []
-        self.dischargeToHousePlan      = []
-        self.eddiPlan                  = []
-        self.planUpdateTime            = None
+        self.log                   = log
+        self.args                  = args
+        self.maxChargeRate         = float(args['batteryChargeRateLimit'])
+        self.batteryGridChargeRate = float(args['batteryGridChargeRate'])
+        self.batReservePct         = float(args['batteryReservePercentage'])
+        self.batFullPct            = float(args['batteryFullPercentage'])
+        self.gasEfficiency         = float(args['gasHotWaterEfficiency'])
+        self.eddiTargetPower       = float(args['eddiTargetPower'])
+        self.eddiPowerLimit        = float(args['eddiPowerLimit'])
+        self.minBuySelMargin       = float(args['minBuySelMargin'])
+        self.minBuyUseMargin       = float(args['minBuyUseMargin'])
+        self.gasRate               = 0
+        self.batFullPctHysteresis  = 3
+        self.batEfficiency         = 0.9
+        self.futureTimeWindowHours = 48
+        self.stateSavesPath        = "/conf/stateSaves"
+        self.solarData             = []
+        self.exportRateData        = []
+        self.importRateData        = []
+        self.usageData             = []
+        self.solarChargingPlan     = []
+        self.gridChargingPlan      = []
+        self.houseGridPoweredPlan  = []
+        self.standbyPlan           = []
+        self.dischargePlan         = []
+        self.dischargeToHousePlan  = []
+        self.eddiPlan              = []
+        self.planUpdateTime        = None
 
 
     def save(self):

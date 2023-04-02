@@ -182,18 +182,18 @@ class PowerControl(hass.Hass):
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)
-        self.set_state(self.batteryModeOutputEntityName, state=modeInfo,      attributes={"planUpdateTime":       self.core.planUpdateTime,
-                                                                                          "stateUpdateTime":      now,
-                                                                                          "dischargePlan":        self.core.seriesToString(self.core.dischargePlan,        mergeable=True),
-                                                                                          "solarChargingPlan":    self.core.seriesToString(self.core.solarChargingPlan,    mergeable=True),
-                                                                                          "gridChargingPlan":     self.core.seriesToString(self.core.gridChargingPlan,     mergeable=True),
-                                                                                          "houseGridPoweredPlan": self.core.seriesToString(self.core.houseGridPoweredPlan, mergeable=True),
-                                                                                          "standbyPlan":          self.core.seriesToString(self.core.standbyPlan,          mergeable=True),
-                                                                                          "tariff":               self.core.pwTariff,
-                                                                                          "defPrice":             self.core.defPrice})
-        self.set_state(self.eddiOutputEntityName,        state=eddiInfo,      attributes={"planUpdateTime":       self.core.planUpdateTime,
-                                                                                          "stateUpdateTime":      now,
-                                                                                          "plan":                 self.core.seriesToString(self.core.eddiPlan, mergeable=True)})
+        self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":       self.core.planUpdateTime,
+                                                                                     "stateUpdateTime":      now,
+                                                                                     "dischargePlan":        self.core.seriesToString(self.core.dischargePlan,        mergeable=True),
+                                                                                     "solarChargingPlan":    self.core.seriesToString(self.core.solarChargingPlan,    mergeable=True),
+                                                                                     "gridChargingPlan":     self.core.seriesToString(self.core.gridChargingPlan,     mergeable=True),
+                                                                                     "houseGridPoweredPlan": self.core.seriesToString(self.core.houseGridPoweredPlan, mergeable=True),
+                                                                                     "standbyPlan":          self.core.seriesToString(self.core.standbyPlan,          mergeable=True),
+                                                                                     "tariff":               self.core.pwTariff,
+                                                                                     "defPrice":             self.core.defPrice})
+        self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":       self.core.planUpdateTime,
+                                                                                     "stateUpdateTime":      now,
+                                                                                     "plan":                 self.core.seriesToString(self.core.eddiPlan, mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)

@@ -28,7 +28,7 @@ class PowerControlCore():
         self.gasRate               = 0
         self.batFullPctHysteresis  = 3
         self.batEfficiency         = 0.9
-        self.futureTimeWindowHours = 48
+        self.futureTimeWindow      = timedelta(hours=24)
         self.stateSavesPath        = "/conf/stateSaves"
         self.solarData             = []
         self.exportRateData        = []
@@ -176,9 +176,10 @@ class PowerControlCore():
         return output
 
 
-    def extendSeries(self, inputSeries, endTime):                                      
+    def extendSeries(self, inputSeries, extendBy):                                      
         outputSeries = list(inputSeries)
         if outputSeries:
+            endTime = outputSeries[-1][1] + extendBy
             while outputSeries[-1][1] < endTime:
                 # Get the details of the last slot
                 periodStartTime = outputSeries[-1][0] 
@@ -214,9 +215,9 @@ class PowerControlCore():
         # Remove rates that are in the past
         exportRateData = self.exportRateData
         importRateData = self.importRateData
-        if self.args.get('extendTariff', True):
-            exportRateData = self.extendSeries(exportRateData, now + timedelta(hours=self.futureTimeWindowHours))
-            importRateData = self.extendSeries(importRateData, now + timedelta(hours=self.futureTimeWindowHours))
+        if self.args.get('extendTariff', False):
+            exportRateData = self.extendSeries(exportRateData, self.futureTimeWindow)
+            importRateData = self.extendSeries(importRateData, self.futureTimeWindow)
         exportRateData = list(filter(lambda x: x[1] >= now, exportRateData))
         importRateData = list(filter(lambda x: x[1] >= now, importRateData))
         # remove any import rate data that is outside the time range for the export rates and vice 

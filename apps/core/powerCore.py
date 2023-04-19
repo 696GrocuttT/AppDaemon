@@ -176,10 +176,10 @@ class PowerControlCore():
         return output
 
 
-    def extendSeries(self, inputSeries, extendBy):                                      
+    def extendSeries(self, inputSeries, extendBy = timedelta(), extendTo = None):                                      
         outputSeries = list(inputSeries)
         if outputSeries:
-            endTime = outputSeries[-1][1] + extendBy
+            endTime = (extendTo if extendTo else outputSeries[-1][1]) + extendBy
             while outputSeries[-1][1] < endTime:
                 # Get the details of the last slot
                 periodStartTime = outputSeries[-1][0] 
@@ -197,27 +197,14 @@ class PowerControlCore():
         
     def mergeAndProcessData(self, now):
         self.log("Updating schedule")        
-        # Calculate the solar surplus after house load, we base this on the usage time 
-        # series dates as that's typically a finer granularity than the solar forecast. Similarly 
-        # we work out the house usage after any forecast solar. The solar forecast has 3 values in 
-        # the following order, a 50th percentile followed by a low and high estimate of the power 
-        # for each period. We carry this through to the generated series so we can more accuratly 
-        # plan the battery charge / house usage.
-        solarSurplus    = self.combineSeries(self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a)), 
-                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a), 0, 1), 
-                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, b-a), 0, 2))
-        solarUsage      = self.combineSeries(self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a),
-                                             self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a, 1, 1),
-                                             self.opOnSeries(solarSurplus,   self.solarData, lambda a, b: b-a, 2, 2))
-        usageAfterSolar = self.combineSeries(self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b)),
-                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b), 0, 1),
-                                             self.opOnSeries(self.usageData, self.solarData, lambda a, b: max(0, a-b), 0, 2))
         # Remove rates that are in the past
         exportRateData = self.exportRateData
         importRateData = self.importRateData
         if self.args.get('extendTariff', False):
-            exportRateData = self.extendSeries(exportRateData, self.futureTimeWindow)
-            importRateData = self.extendSeries(importRateData, self.futureTimeWindow)
+            # Calculate the end time to extend to, but make sure its midnight.
+            endTime        = (exportRateData[-1][1] + self.futureTimeWindow).replace(hour=0, minute=0, second=0, microsecond=0)
+            exportRateData = self.extendSeries(exportRateData, timedelta(), endTime)
+            importRateData = self.extendSeries(importRateData, timedelta(), endTime)
         exportRateData = list(filter(lambda x: x[1] >= now, exportRateData))
         importRateData = list(filter(lambda x: x[1] >= now, importRateData))
         # remove any import rate data that is outside the time range for the export rates and vice 
@@ -228,6 +215,24 @@ class PowerControlCore():
         importRateData              = list(filter(lambda x: x[1] <= exportRateEndTime, importRateData))
         self.originalExportRateData = list(exportRateData)
         self.originalImportRateData = list(importRateData)
+
+        # Calculate the solar surplus after house load, we base this on the usage time 
+        # series dates as that's typically a finer granularity than the solar forecast. Similarly 
+        # we work out the house usage after any forecast solar. The solar forecast has 3 values in 
+        # the following order, a 50th percentile followed by a low and high estimate of the power 
+        # for each period. We carry this through to the generated series so we can more accuratly 
+        # plan the battery charge / house usage.
+        usageData       = self.extendSeries(self.usageData, timedelta(), exportRateData[-1][1])
+        solarSurplus    = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a)), 
+                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 1), 
+                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 2))
+        solarUsage      = self.combineSeries(self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a),
+                                             self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 1, 1),
+                                             self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 2, 2))
+        usageAfterSolar = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b)),
+                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 1),
+                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 2))
+
         # We can't import and export at the same time, so remove and import rates slots for times when
         # there's a solar surplus. In reality it isn't quite this simple, eg if there's 1KW of surplus 
         # we could charge at 3kw by pulling some from the grid. But for the moment this hybrid style 

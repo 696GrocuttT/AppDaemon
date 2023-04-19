@@ -479,7 +479,7 @@ class PowerControl(hass.Hass):
             forecastUsage.append((forecastUsageStartTime, forecastUsageEndTime, avgUsage)) 
             forecastUsageStartTime = forecastUsageEndTime
         # Extend the usage forcast into the future by the number of house in the planning window
-        forecastUsage = self.core.extendSeries(forecastUsage, self.core.futureTimeWindow + timedelta(hours=24))        
+        forecastUsage = self.core.extendSeries(forecastUsage, timedelta(hours=24))        
         self.core.printSeries(forecastUsage, "Usage forecast")
         self.core.usageData = forecastUsage
         # If there's not been an output update so far, force it now

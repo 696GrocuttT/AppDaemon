@@ -7,7 +7,8 @@ class BasicInactiveAutoOff(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))
         self.inputEntityName      = self.args["inputEntity"]
-        self.outputEntityName     = self.args["outputEntity"]        
+        self.outputEntityName     = self.args["outputEntity"]     
+        self.outputOnArgs         = self.args.get("outputOnArgs", "{}")
         self.autoOffTimeDelay     = self.args.get("autoOffTimeDelay", 120)
         self.manualOffToAutoDelay = timedelta(seconds=self.args.get("manualOffToAutoDelay", 20))
         if not "log_level" in self.args:
@@ -70,7 +71,7 @@ class BasicInactiveAutoOff(hass.Hass):
 
 
     def input_changed(self, entity, attribute, old, new, kwargs):
-        self.log("input " + old + " --> " + new + ". auto " + str(self.auto) + " args \"" +str(kwargs) + "\"")
+        self.log("input " + old + " --> " + new + ". auto " + str(self.auto) + " args \"" + str(kwargs) + "\"")
         fromEvent = kwargs.get("fromEvent", False) if kwargs else False
         # if there's a running timer, cancel it
         if self.timer:
@@ -83,7 +84,9 @@ class BasicInactiveAutoOff(hass.Hass):
                 # Evaluate any additional conditions
                 if self.evalConditions(self.extraOnConditions): 
                     self.pendingAuto = True
-                    self.turn_on(self.outputEntityName)
+                    extraArgs        = eval(self.outputOnArgs)
+                    self.log("turn_on args \"" +str(extraArgs) + "\"")
+                    self.turn_on(self.outputEntityName, **extraArgs)
         else:
             # schedule a timer to turn the output off after a delay
             self.timer = self.run_in(self.output_off, self.offDelay())

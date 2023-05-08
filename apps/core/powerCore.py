@@ -169,9 +169,14 @@ class PowerControlCore():
             forecastStartTime = forecastPeriod[0]
             forecastEndTime   = forecastPeriod[1]
             forecastPower     = forecastPeriod[2+valueIdxOffset]
-            # is it a complete match
-            if startTime <= forecastStartTime and endTime >= forecastEndTime:
+            # is it an exact match
+            if  startTime == forecastStartTime and endTime == forecastEndTime:
                 power = power + forecastPower 
+                # If its an exact match we should be done, so exit early
+                break
+            # is it a complete match
+            elif startTime <= forecastStartTime and endTime >= forecastEndTime:
+                power = power + forecastPower
             # period all within forecost
             elif startTime >= forecastStartTime and endTime <= forecastEndTime:
                 # scale the forecast power to the length of the period

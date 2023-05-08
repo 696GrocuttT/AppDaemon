@@ -148,7 +148,7 @@ class PowerControl(hass.Hass):
         solarChargeInfo          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.solarChargingPlan),        None)
         standbyInfo              = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.standbyPlan),              None)
         modeInfo                 = ("Discharge"          if dischargeExportSolarInfo else
-                                    "Discharge"          if dischargeToGridInfo      else
+                                    "Discharge to grid"  if dischargeToGridInfo      else
                                     "Standby"            if standbyInfo              else 
                                     "Grid charge"        if gridChargeInfo           else 
                                     "House grid powered" if houseGridPowerdeInfo     else "Solar charge")        

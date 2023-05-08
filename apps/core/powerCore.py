@@ -789,7 +789,7 @@ class PowerControlCore():
                 # difference between the cost of the charge / discharge periods isn't greater than the 
                 # threshold. This reduces battery cycling if there's not much to be gained from it.
                 newMaxCostRate          = newBatAllocateState.maxChargeCost
-                newMaxHouseRateForEmpty = self.maxHouseRateForEmpty(batAllocateState)
+                newMaxHouseRateForEmpty = self.maxHouseRateForEmpty(newBatAllocateState)
                 if newMaxHouseRateForEmpty != None:
                     newMaxCostRate = max(newBatAllocateState.maxChargeCost, newMaxHouseRateForEmpty)
                 if fullyCharged and mostExpenciveRate[2] - newMaxCostRate > self.minBuySelMargin:

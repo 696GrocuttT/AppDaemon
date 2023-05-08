@@ -94,34 +94,37 @@ class BatteryAllocateState():
 
 class PowerControlCore():
     def __init__(self, args, log):
-        self.log                   = log
-        self.args                  = args
-        self.maxChargeRate         = float(args['batteryChargeRateLimit'])
-        self.batteryGridChargeRate = float(args['batteryGridChargeRate'])
-        self.batReservePct         = float(args['batteryReservePercentage'])
-        self.batFullPct            = float(args['batteryFullPercentage'])
-        self.gasEfficiency         = float(args['gasHotWaterEfficiency'])
-        self.eddiTargetPower       = float(args['eddiTargetPower'])
-        self.eddiPowerLimit        = float(args['eddiPowerLimit'])
-        self.minBuySelMargin       = float(args['minBuySelMargin'])
-        self.minBuyUseMargin       = float(args['minBuyUseMargin'])
-        self.gasRate               = 0
-        self.batFullPctHysteresis  = 3
-        self.batEfficiency         = 0.9
-        self.futureTimeWindow      = timedelta(hours=24)
-        self.stateSavesPath        = "/conf/stateSaves"
-        self.solarData             = []
-        self.exportRateData        = []
-        self.importRateData        = []
-        self.usageData             = []
-        self.solarChargingPlan     = []
-        self.gridChargingPlan      = []
-        self.houseGridPoweredPlan  = []
-        self.standbyPlan           = []
-        self.dischargePlan         = []
-        self.dischargeToHousePlan  = []
-        self.eddiPlan              = []
-        self.planUpdateTime        = None
+        self.log                      = log
+        self.args                     = args
+        self.maxChargeRate            = float(args['batteryChargeRateLimit'])
+        self.maxDischargeRate         = float(args['batteryDischargeRateLimit'])
+        self.batteryGridChargeRate    = float(args['batteryGridChargeRate'])
+        self.batReservePct            = float(args['batteryReservePercentage'])
+        self.batFullPct               = float(args['batteryFullPercentage'])
+        self.gasEfficiency            = float(args['gasHotWaterEfficiency'])
+        self.eddiTargetPower          = float(args['eddiTargetPower'])
+        self.eddiPowerLimit           = float(args['eddiPowerLimit'])
+        self.gridExportLimit          = float(args['gridExportLimit']) 
+        self.minBuySelMargin          = float(args['minBuySelMargin'])
+        self.minBuyUseMargin          = float(args['minBuyUseMargin'])
+        self.gasRate                  = 0
+        self.batFullPctHysteresis     = 3
+        self.batEfficiency            = 0.9
+        self.futureTimeWindow         = timedelta(hours=24)
+        self.stateSavesPath           = "/conf/stateSaves"
+        self.solarData                = []
+        self.exportRateData           = []
+        self.importRateData           = []
+        self.usageData                = []
+        self.solarChargingPlan        = []
+        self.gridChargingPlan         = []
+        self.houseGridPoweredPlan     = []
+        self.standbyPlan              = []
+        self.dischargeExportSolarPlan = []
+        self.dischargeToGridPlan      = []
+        self.dischargeToHousePlan     = []
+        self.eddiPlan                 = []
+        self.planUpdateTime           = None
 
 
     def save(self):
@@ -330,7 +333,8 @@ class PowerControlCore():
             isPlanned       = (self.powerForPeriod(batPlans.solarChargingPlan,        rate[0], rate[1]) > 0 or
                                self.powerForPeriod(batPlans.gridChargingPlan,         rate[0], rate[1]) > 0 or
                                self.powerForPeriod(batPlans.houseGridPoweredPlan,     rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(batPlans.dischargeExportSolarPlan, rate[0], rate[1]) > 0)
+                               self.powerForPeriod(batPlans.dischargeExportSolarPlan, rate[0], rate[1]) > 0 or
+                               self.powerForPeriod(batPlans.dischargeToGridPlan,      rate[0], rate[1]) > 0)
             if (curSolarSurplus > 0) and not isPlanned: 
                 standbyPlan.append((rate[0], rate[1], curSolarSurplus))
         # Create a background plan for info only that shows when we're just powering the house from the battery.
@@ -340,20 +344,13 @@ class PowerControlCore():
         dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.houseGridPoweredPlan,     lambda a, b: 0 if b else a)
         dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  standbyPlan,                       lambda a, b: 0 if b else a)
         dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.dischargeExportSolarPlan, lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.dischargeToGridPlan,      lambda a, b: 0 if b else a)
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
         eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus, batPlans.solarChargingPlan)
         
         # Create a fake tariff with peak time covering the discharge plan
-        midnight                     = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        # Filter out anything except the 2 hours. This prevents the powerwall not behaving properly
-        # because it thinks it won't have enough time to charge later.
-        tariffEnd                    = now + timedelta(hours=2)
-        dischargePlanNextHour        = list(filter(lambda x: x[1] <= tariffEnd, batPlans.dischargeExportSolarPlan))
-        standbyPlanNextHour          = list(filter(lambda x: x[1] <= tariffEnd, standbyPlan))
-        houseGridPoweredPlanNextHour = list(filter(lambda x: x[1] <= tariffEnd, batPlans.houseGridPoweredPlan))
-        solarChargingPlanNextHour    = list(filter(lambda x: x[1] <= tariffEnd, batPlans.solarChargingPlan))
         # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 
         # twisted logic to this. Firstly it doesn't actually matter as we set the powerwall to Self-powered 
         # when we want to charge from solar, which doesn't use the tariff plan. The powerwall sometimes
@@ -363,6 +360,7 @@ class PowerControlCore():
         # case we need to swap. We also extend the peak period into the past a bit. This prevents any
         # strange behaviour given we have to have to change the battery settings just before the start of 
         # each hour.
+        midnight      = now.replace(hour=0, minute=0, second=0, microsecond=0)
         hourStart     = (now + timedelta(minutes=15)).replace(minute=0, second=0, microsecond=0)
         peakPlan      = [(hourStart - timedelta(minutes=15), hourStart + timedelta(hours=2), 0)]
         peakPeriods   = self.seriesToTariff(peakPlan, midnight)
@@ -373,16 +371,18 @@ class PowerControlCore():
         self.printSeries(batPlans.houseGridPoweredPlan,     "House grid powered plan",     mergeable=True)
         self.printSeries(standbyPlan,                       "Standby plan",                mergeable=True)
         self.printSeries(batPlans.dischargeExportSolarPlan, "Discharge export solar plan", mergeable=True)
+        self.printSeries(batPlans.dischargeToGridPlan,      "Discharge to grid plan",      mergeable=True)
         self.printSeries(dischargeToHousePlan,              "Discharging to house plan",   mergeable=True)
         self.printSeries(eddiPlan,                          "Eddi plan",                   mergeable=True)
-        self.solarChargingPlan    = batPlans.solarChargingPlan
-        self.gridChargingPlan     = batPlans.gridChargingPlan
-        self.houseGridPoweredPlan = batPlans.houseGridPoweredPlan
-        self.standbyPlan          = standbyPlan
-        self.dischargePlan        = batPlans.dischargeExportSolarPlan
-        self.dischargeToHousePlan = dischargeToHousePlan
-        self.eddiPlan             = eddiPlan
-        self.planUpdateTime       = now
+        self.solarChargingPlan        = batPlans.solarChargingPlan
+        self.gridChargingPlan         = batPlans.gridChargingPlan
+        self.houseGridPoweredPlan     = batPlans.houseGridPoweredPlan
+        self.standbyPlan              = standbyPlan
+        self.dischargeExportSolarPlan = batPlans.dischargeExportSolarPlan
+        self.dischargeToGridPlan      = batPlans.dischargeToGridPlan
+        self.dischargeToHousePlan     = dischargeToHousePlan
+        self.eddiPlan                 = eddiPlan
+        self.planUpdateTime           = now
         
 
     def eddiTargetRate(self):
@@ -710,18 +710,33 @@ class PowerControlCore():
         batAllocateState    = BatteryAllocateState(exportRateData, importRateData, solarSurplus, usageAfterSolar, self)
         self.allocateChangingSlots(batAllocateState, now, maxImportRate)
 
-        # Now we have a change plan, see if we can swap some of the slots to discharge to improve the income
-        def dischargeExportSolarSlotTest(state, slot):
-            newState          = None
-            solarUsageForRate = self.powerForPeriod(solarUsage, slot[0], slot[1])
-            if solarUsageForRate > 0:
-                # Create a new copy of the battery allocation obj that we can add the new discharge slot to 
-                # as an experiment.
+        # Now we have a change plan, see if we can swap some of the slots to discharge to the grid to improve the
+        # income
+        def dischargeGridExportSlotTest(state, slot):
+            newState            = None
+            timeInSlot          = (slot[1] - slot[0]).total_seconds() / (60 * 60)
+            maxExportForSlot    = timeInSlot * self.gridExportLimit
+            maxDischargeForSlot = timeInSlot * self.maxDischargeRate
+            solarSurplusForSlot = self.powerForPeriod(state.solarSurplus, slot[0], slot[1])
+            dischargeForSlot    = min(maxDischargeForSlot, max(0, maxExportForSlot - solarSurplusForSlot))
+            if dischargeForSlot > 0:
                 newState = state.copy()
-                newState.dischargeExportSolarPlan.append((slot[0], slot[1], solarUsageForRate))
+                newState.dischargeToGridPlan.append((slot[0], slot[1], dischargeForSlot))
             return newState   
             
-        self.addDischargeSlots(batAllocateState, solarUsage, now, maxImportRate, dischargeExportSolarSlotTest)
+        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeGridExportSlotTest)
+
+        # Now we have a change plan, see if we can swap some of the slots to discharge to cover the house usage to
+        # improve the income
+        def dischargeExportSolarSlotTest(state, slot):
+            newState          = None
+            solarUsageForSlot = self.powerForPeriod(solarUsage, slot[0], slot[1])
+            if solarUsageForSlot > 0:
+                newState = state.copy()
+                newState.dischargeExportSolarPlan.append((slot[0], slot[1], solarUsageForSlot))
+            return newState   
+            
+        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeExportSolarSlotTest)
    
         self.printSeries(batAllocateState.batProfile, "Battery profile - pre topup")
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
@@ -749,6 +764,7 @@ class PowerControlCore():
         exportProfile = self.opOnSeries(batAllocateState.solarSurplus, exportRateData,            lambda a, b: a if b else 0)
         exportProfile = self.opOnSeries(exportProfile, batAllocateState.solarChargingPlan,        lambda a, b: a - b)
         exportProfile = self.opOnSeries(exportProfile, batAllocateState.dischargeExportSolarPlan, lambda a, b: a + b)
+        exportProfile = self.opOnSeries(exportProfile, batAllocateState.dischargeToGridPlan,      lambda a, b: a + b)
         exportProfile = list(filter(lambda x: x[2], exportProfile))
         self.printSeries(exportProfile, "Export profile - pre eddi")
         batAllocateState.sortPlans()
@@ -759,7 +775,7 @@ class PowerControlCore():
         return batAllocateState
 
 
-    def addDischargeSlots(self, batAllocateState, solarUsage, now, maxImportRate, slotTest):
+    def addDischargeSlots(self, batAllocateState, now, maxImportRate, slotTest):
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
         # availableChargeRates list directly, as we need to remove entries as we go, and we still need 
@@ -768,6 +784,13 @@ class PowerControlCore():
         while potentialDischargeRates:
             mostExpenciveRate = potentialDischargeRates[-1]
             del potentialDischargeRates[-1]
+            # Do a quick test between the previous max change cost and the export rate we're testing to see 
+            # if it's we exceed the minimum dischange margin. This isn't the full store as dischanging in a
+            # slot may mean we need extra (more expensive) charge slots, but it gives us a early test to 
+            # reduce CPU overheads that won't give us false negatives.
+            if mostExpenciveRate[2] -  batAllocateState.maxChargeCost <= self.minBuySelMargin:
+                continue
+            
             # Check if discharging in this slot is plausable. The slot test function must return a new 
             # state object if it is, and it can't be the same as the existing state object as we need
             # to modify it during the checks to see if this slot is indeed possible to discharge in.

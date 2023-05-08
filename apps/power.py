@@ -140,28 +140,31 @@ class PowerControl(hass.Hass):
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
         # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.
-        slotMidTime          = now + timedelta(minutes=15)
-        dischargeInfo        = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.dischargePlan),        None)
-        gridChargeInfo       = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.gridChargingPlan),     None)
-        houseGridPowerdeInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.houseGridPoweredPlan), None)
-        solarChargeInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.solarChargingPlan),    None)
-        standbyInfo          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.standbyPlan),          None)
-        modeInfo             = ("Discharge"          if dischargeInfo        else
-                                "Standby"            if standbyInfo          else 
-                                "Grid charge"        if gridChargeInfo       else 
-                                "House grid powered" if houseGridPowerdeInfo else "Solar charge")        
-        eddiInfo             = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.eddiPlan), None)
-        eddiInfo             = "on" if eddiInfo else "off"
+        slotMidTime              = now + timedelta(minutes=15)
+        dischargeExportSolarInfo = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.dischargeExportSolarPlan), None)
+        dischargeToGridInfo      = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.dischargeToGridPlan),      None)
+        gridChargeInfo           = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.gridChargingPlan),         None)
+        houseGridPowerdeInfo     = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.houseGridPoweredPlan),     None)
+        solarChargeInfo          = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.solarChargingPlan),        None)
+        standbyInfo              = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.standbyPlan),              None)
+        modeInfo                 = ("Discharge"          if dischargeExportSolarInfo else
+                                    "Discharge"          if dischargeToGridInfo      else
+                                    "Standby"            if standbyInfo              else 
+                                    "Grid charge"        if gridChargeInfo           else 
+                                    "House grid powered" if houseGridPowerdeInfo     else "Solar charge")        
+        eddiInfo                 = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.eddiPlan), None)
+        eddiInfo                 = "on" if eddiInfo else "off"
         # generate a summary string for the combined plan
-        summary              = ( list(map(lambda x: ("D", x[0]), self.core.mergeSeries(self.core.dischargePlan)))        +
-                                 list(map(lambda x: ("C", x[0]), self.core.mergeSeries(self.core.solarChargingPlan)))    +
-                                 list(map(lambda x: ("G", x[0]), self.core.mergeSeries(self.core.gridChargingPlan)))     +
-                                 list(map(lambda x: ("H", x[0]), self.core.mergeSeries(self.core.houseGridPoweredPlan))) +
-                                 list(map(lambda x: ("S", x[0]), self.core.mergeSeries(self.core.standbyPlan)))          +
-                                 list(map(lambda x: ("B", x[0]), self.core.mergeSeries(self.core.dischargeToHousePlan))) )
+        summary                  = ( list(map(lambda x: ("D", x[0]), self.core.mergeSeries(self.core.dischargeExportSolarPlan))) +
+                                     list(map(lambda x: ("E", x[0]), self.core.mergeSeries(self.core.dischargeToGridPlan)))      +
+                                     list(map(lambda x: ("C", x[0]), self.core.mergeSeries(self.core.solarChargingPlan)))        +
+                                     list(map(lambda x: ("G", x[0]), self.core.mergeSeries(self.core.gridChargingPlan)))         +
+                                     list(map(lambda x: ("H", x[0]), self.core.mergeSeries(self.core.houseGridPoweredPlan)))     +
+                                     list(map(lambda x: ("S", x[0]), self.core.mergeSeries(self.core.standbyPlan)))              +
+                                     list(map(lambda x: ("B", x[0]), self.core.mergeSeries(self.core.dischargeToHousePlan))) )
         summary.sort(key=lambda x: x[1])
-        summary              = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
-        summary              = ",".join(summary)
+        summary                  = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
+        summary                  = ",".join(summary)
 
         # Update the prev max charge cost. We do this by resetting it aronud 4:30pm (when 
         # we've got the rate data for the next day), and updating if if we're starting a 
@@ -182,18 +185,19 @@ class PowerControl(hass.Hass):
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)
-        self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":       self.core.planUpdateTime,
-                                                                                     "stateUpdateTime":      now,
-                                                                                     "dischargePlan":        self.core.seriesToString(self.core.dischargePlan,        mergeable=True),
-                                                                                     "solarChargingPlan":    self.core.seriesToString(self.core.solarChargingPlan,    mergeable=True),
-                                                                                     "gridChargingPlan":     self.core.seriesToString(self.core.gridChargingPlan,     mergeable=True),
-                                                                                     "houseGridPoweredPlan": self.core.seriesToString(self.core.houseGridPoweredPlan, mergeable=True),
-                                                                                     "standbyPlan":          self.core.seriesToString(self.core.standbyPlan,          mergeable=True),
-                                                                                     "tariff":               self.core.pwTariff,
-                                                                                     "defPrice":             self.core.defPrice})
-        self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":       self.core.planUpdateTime,
-                                                                                     "stateUpdateTime":      now,
-                                                                                     "plan":                 self.core.seriesToString(self.core.eddiPlan, mergeable=True)})
+        self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
+                                                                                     "stateUpdateTime":          now,
+                                                                                     "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, mergeable=True),
+                                                                                     "dischargeToGridInfo":      self.core.seriesToString(self.core.dischargeToGridPlan,      mergeable=True),
+                                                                                     "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        mergeable=True),
+                                                                                     "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         mergeable=True),
+                                                                                     "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     mergeable=True),
+                                                                                     "standbyPlan":              self.core.seriesToString(self.core.standbyPlan,              mergeable=True),
+                                                                                     "tariff":                   self.core.pwTariff,
+                                                                                     "defPrice":                 self.core.defPrice})
+        self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
+                                                                                     "stateUpdateTime":          now,
+                                                                                     "plan":                     self.core.seriesToString(self.core.eddiPlan, mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)

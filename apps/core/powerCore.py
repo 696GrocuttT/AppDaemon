@@ -452,13 +452,13 @@ class PowerControlCore():
         totChargeEnergy  = 0.0
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(state.exportRateData):
-            chargeEnergy     = (self.powerForPeriod(state.solarChargingPlan,    rate[0], rate[1], percentileIndex) +
-                                self.powerForPeriod(state.gridChargingPlan,     rate[0], rate[1]))
+            chargeEnergy     = (self.powerForPeriod(state.solarChargingPlan,        rate[0], rate[1], percentileIndex) +
+                                self.powerForPeriod(state.gridChargingPlan,         rate[0], rate[1]))
             batteryRemaining = (batteryRemaining + chargeEnergy - 
-                                self.powerForPeriod(state.usageAfterSolar,      rate[0], rate[1], percentileIndex) -
-                                self.powerForPeriod(state.dischargeExportSolarPlan,  rate[0], rate[1]) -
-                                self.powerForPeriod(state.dischargeToGridPlan,  rate[0], rate[1]) +
-                                self.powerForPeriod(state.houseGridPoweredPlan, rate[0], rate[1]))
+                                self.powerForPeriod(state.usageAfterSolar,          rate[0], rate[1], percentileIndex) -
+                                self.powerForPeriod(state.dischargeExportSolarPlan, rate[0], rate[1]) -
+                                self.powerForPeriod(state.dischargeToGridPlan,      rate[0], rate[1]) +
+                                self.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1]))
             totChargeEnergy  = totChargeEnergy + chargeEnergy
             fullyChanged     = batteryRemaining >= self.batteryCapacity
             empty            = batteryRemaining <= batReserveEnergy

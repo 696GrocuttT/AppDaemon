@@ -781,11 +781,21 @@ class PowerControlCore():
 
 
     def addDischargeSlots(self, batAllocateState, now, maxImportRate, slotTest):
+        # Limit the length of time into the future that we calculate the discharge slots
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        endTime  = midnight + timedelta(hours=24)
+        if now.hour > 21:
+            endTime = endtime + timedelta(hours=24)
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
         # availableChargeRates list directly, as we need to remove entries as we go, and we still need 
-        # to have a list of available charge slots after this step.
-        potentialDischargeRates = list(batAllocateState.availableChargeRates)
+        # to have a list of available charge slots after this step. We sort the list to favour the most 
+        # profitable slots, then the earliest day, then the latest slot on that day (which is likely to 
+        # be when there's the least solar, so we consider the largest power slots first).
+        potentialDischargeRates = sorted(filter(lambda x: x[0] < endTime, batAllocateState.availableChargeRates), 
+                                         key=lambda x: ( x[2], 
+                                                         -x[0].replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), 
+                                                         x[0].replace(year=2000, month=1, day=1).timestamp() ))
         while potentialDischargeRates:
             mostExpenciveRate = potentialDischargeRates[-1]
             del potentialDischargeRates[-1]
@@ -793,7 +803,7 @@ class PowerControlCore():
             # if it's we exceed the minimum dischange margin. This isn't the full store as dischanging in a
             # slot may mean we need extra (more expensive) charge slots, but it gives us a early test to 
             # reduce CPU overheads that won't give us false negatives.
-            if mostExpenciveRate[2] -  batAllocateState.maxChargeCost <= self.minBuySelMargin:
+            if mostExpenciveRate[2] - batAllocateState.maxChargeCost <= self.minBuySelMargin:
                 continue
             
             # Check if discharging in this slot is plausable. The slot test function must return a new 

@@ -422,9 +422,11 @@ class PowerControl(hass.Hass):
 
 
     def processUsageDataToTimeRange(self, rawUsageData):
+        rawUsageData = rawUsageData.get("result", [])
+        rawUsageData = rawUsageData[0] if rawUsageData else []
         rawUsageData = list(map(lambda x: (datetime.fromisoformat(x['last_changed']), 
                                            x['state']), 
-                                rawUsageData["result"][0]))
+                                rawUsageData))
         rawUsageData.sort(key=lambda x: x[0])    
         timeRangeUsageData = []
         startPower         = None

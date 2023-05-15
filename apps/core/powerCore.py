@@ -367,7 +367,7 @@ class PowerControlCore():
         # each hour.
         midnight      = now.replace(hour=0, minute=0, second=0, microsecond=0)
         hourStart     = (now + timedelta(minutes=15)).replace(minute=0, second=0, microsecond=0)
-        peakPlan      = [(hourStart - timedelta(minutes=15), hourStart + timedelta(hours=2), 0)]
+        peakPlan      = [(hourStart - timedelta(minutes=15), hourStart + timedelta(hours=3), 0)]
         peakPeriods   = self.seriesToTariff(peakPlan, midnight)
         self.defPrice = "0.10 0.10 OFF_PEAK"
         self.pwTariff = {"0.90 0.90 ON_PEAK": peakPeriods}

@@ -785,7 +785,7 @@ class PowerControlCore():
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         endTime  = midnight + timedelta(hours=24)
         if now.hour > 21:
-            endTime = endtime + timedelta(hours=24)
+            endTime = endTime + timedelta(hours=24)
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
         # availableChargeRates list directly, as we need to remove entries as we go, and we still need 

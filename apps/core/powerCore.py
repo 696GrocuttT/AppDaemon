@@ -16,12 +16,14 @@ import copy
 
 class BatteryAllocateState():
     def __init__(self, exportRateData, importRateData, solarSurplus, usageAfterSolar, core):
+        self.core                     = core
         self.batProfile               = []
         self.solarChargingPlan        = []
         self.gridChargingPlan         = []
         self.houseGridPoweredPlan     = []
         self.dischargeExportSolarPlan = []
         self.dischargeToGridPlan      = []
+        self.eddiPlan                 = []
         self.maxChargeCost            = core.maxChargeCost
         self.solarSurplus             = solarSurplus
         self.usageAfterSolar          = usageAfterSolar
@@ -54,6 +56,7 @@ class BatteryAllocateState():
         self.houseGridPoweredPlan.sort(key=lambda x: x[0])
         self.dischargeExportSolarPlan.sort(key=lambda x: x[0])
         self.dischargeToGridPlan.sort(key=lambda x: x[0])
+        self.eddiPlan.sort(key=lambda x: x[0])
 
 
     def setTo(self, fromState):
@@ -63,6 +66,7 @@ class BatteryAllocateState():
         self.houseGridPoweredPlan           = fromState.houseGridPoweredPlan
         self.dischargeExportSolarPlan       = fromState.dischargeExportSolarPlan
         self.dischargeToGridPlan            = fromState.dischargeToGridPlan
+        self.eddiPlan                       = fromState.eddiPlan
         self.maxChargeCost                  = fromState.maxChargeCost
         self.availableChargeRates           = fromState.availableChargeRates
         self.availableImportRates           = fromState.availableImportRates
@@ -81,6 +85,7 @@ class BatteryAllocateState():
         newState.houseGridPoweredPlan           = list(newState.houseGridPoweredPlan)
         newState.dischargeExportSolarPlan       = list(newState.dischargeExportSolarPlan)
         newState.dischargeToGridPlan            = list(newState.dischargeToGridPlan)
+        newState.eddiPlan                       = list(newState.eddiPlan)
         newState.availableChargeRates           = list(newState.availableChargeRates)
         newState.availableImportRates           = list(newState.availableImportRates)
         newState.availableHouseGridPoweredRates = list(newState.availableHouseGridPoweredRates)
@@ -89,8 +94,33 @@ class BatteryAllocateState():
         newState.exportRateData                 = list(newState.exportRateData)
         newState.importRateData                 = list(newState.importRateData)
         return newState
-        
-        
+
+
+    def exportProfile(self):
+        # Remote charging power and surplus outside the period we have export rates for
+        # (because we won't have a plan for those periods yet).
+        exportProfile = self.core.opOnSeries(self.solarSurplus, self.exportRateData,           lambda a, b: a if b else 0)
+        exportProfile = self.core.opOnSeries(exportProfile,     self.solarChargingPlan,        lambda a, b: a - b)
+        exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeExportSolarPlan, lambda a, b: a + b)
+        exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeToGridPlan,      lambda a, b: a + b)
+        exportProfile = self.core.opOnSeries(exportProfile,     self.eddiPlan,                 lambda a, b: a - b)
+        exportCosts   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: a * b)
+        exportProfile = self.core.combineSeries(exportProfile,  exportCosts)
+        return list(filter(lambda x: x[2], exportProfile))
+
+
+    def importProfile(self):
+        usageWhenGridChanging = self.core.opOnSeries(self.gridChargingPlan, self.usageAfterSolar, lambda a, b: b)
+        # use the input rate to make sure all time slots are populated. Otherwise we only 
+        # end up producing a series when there's a charge plan
+        importProfile = self.core.opOnSeries(self.importRateData, self.gridChargingPlan,     lambda a, b: b if a else 0)
+        importProfile = self.core.opOnSeries(importProfile,       self.houseGridPoweredPlan, lambda a, b: a + b)
+        importProfile = self.core.opOnSeries(importProfile,       usageWhenGridChanging,     lambda a, b: a + b)
+        importCosts   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: a * b)
+        importProfile = self.core.combineSeries(importProfile,    importCosts)
+        return list(filter(lambda x: x[2], importProfile))
+
+
 
 class PowerControlCore():
     def __init__(self, args, log):
@@ -329,6 +359,7 @@ class PowerControlCore():
         
         # calculate the charge plan, and work out what's left afterwards
         batPlans                 = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now)
+        self.printSeries(batPlans.exportProfile(), "Export profile - pre eddi")
         postBatteryChargeSurplus = self.opOnSeries(solarSurplus, batPlans.solarChargingPlan, lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
         # but we don't want to charge or discharge.
@@ -353,7 +384,9 @@ class PowerControlCore():
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
-        eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus, batPlans.solarChargingPlan)
+        batPlans.eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus, batPlans.solarChargingPlan)
+        self.printSeries(batPlans.exportProfile(), "Export profile - post eddi")
+        self.printSeries(batPlans.importProfile(), "Import profile - post eddi")
         
         # Create a fake tariff with peak time covering the discharge plan
         # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 
@@ -378,7 +411,7 @@ class PowerControlCore():
         self.printSeries(batPlans.dischargeExportSolarPlan, "Discharge export solar plan", mergeable=True)
         self.printSeries(batPlans.dischargeToGridPlan,      "Discharge to grid plan",      mergeable=True)
         self.printSeries(dischargeToHousePlan,              "Discharging to house plan",   mergeable=True)
-        self.printSeries(eddiPlan,                          "Eddi plan",                   mergeable=True)
+        self.printSeries(batPlans.eddiPlan,                 "Eddi plan",                   mergeable=True)
         self.solarChargingPlan        = batPlans.solarChargingPlan
         self.gridChargingPlan         = batPlans.gridChargingPlan
         self.houseGridPoweredPlan     = batPlans.houseGridPoweredPlan
@@ -386,7 +419,7 @@ class PowerControlCore():
         self.dischargeExportSolarPlan = batPlans.dischargeExportSolarPlan
         self.dischargeToGridPlan      = batPlans.dischargeToGridPlan
         self.dischargeToHousePlan     = dischargeToHousePlan
-        self.eddiPlan                 = eddiPlan
+        self.eddiPlan                 = batPlans.eddiPlan
         self.planUpdateTime           = now
         
 
@@ -764,19 +797,11 @@ class PowerControlCore():
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Max battery charge cost {0:.2f}".format(batAllocateState.maxChargeCost))
         self.printSeries(batAllocateState.batProfile, "Battery profile - post topup")
-        # calculate the pre-eddi export profile. Remote charging power and surplus outside the period we
-        # have export rates for (because we won't have a plan for those periods yet).
-        exportProfile = self.opOnSeries(batAllocateState.solarSurplus, exportRateData,            lambda a, b: a if b else 0)
-        exportProfile = self.opOnSeries(exportProfile, batAllocateState.solarChargingPlan,        lambda a, b: a - b)
-        exportProfile = self.opOnSeries(exportProfile, batAllocateState.dischargeExportSolarPlan, lambda a, b: a + b)
-        exportProfile = self.opOnSeries(exportProfile, batAllocateState.dischargeToGridPlan,      lambda a, b: a + b)
-        exportProfile = list(filter(lambda x: x[2], exportProfile))
-        self.printSeries(exportProfile, "Export profile - pre eddi")
-        batAllocateState.sortPlans()
         # When calculating the battery profile we allow the "house on grid power" and "grid charging" plans to
         # overlap. However we need to remove this overlap before returning the plan to the caller.
         batAllocateState.houseGridPoweredPlan = self.opOnSeries(batAllocateState.houseGridPoweredPlan, batAllocateState.gridChargingPlan, lambda a, b: 0 if b else a)
         batAllocateState.houseGridPoweredPlan = list(filter(lambda x: x[2], batAllocateState.houseGridPoweredPlan))
+        batAllocateState.sortPlans()
         return batAllocateState
 
 

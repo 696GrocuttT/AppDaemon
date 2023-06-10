@@ -567,7 +567,6 @@ class PowerControlCore():
         # which are still available
         availableImportRatesLocal           = list(state.availableImportRates)
         availableImportRatesLocalUnused     = list(state.availableImportRates)
-        availableChargeRatesLocal           = list(state.availableChargeRates)
         availableHouseGridPoweredRatesLocal = list(state.availableHouseGridPoweredRates)
         # The percentile index is used to select the 50th percentile (index 0) or the low (index 1)
         # or high (index 2) estimates. Which one we choose changes based on whether we're trying to 
@@ -576,6 +575,13 @@ class PowerControlCore():
         # being asked to add a topup, we start off with the low estimate as the first passes are to 
         # ensure the battery doesn't go flat, with later passes topping it up.
         percentileIndex                     = 2 if topUpToChargeCost else 1
+        # Compute a list of times where's a rate, and we have a +ve solar surplus for the selected
+        # percentile. First filter out the slots we don't have a rate for. Then filter out any zero 
+        # surplus slots
+        nonZeroSolarSurplus                 = self.opOnSeries(state.availableChargeRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
+        nonZeroSolarSurplus                 = list(filter(lambda x: x[2], nonZeroSolarSurplus))
+        # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
+        availableChargeRatesLocal           = self.opOnSeries(nonZeroSolarSurplus,       state.availableChargeRates, lambda a, b: b)        
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         (fullEndTimeThresh, fullyCharged, 
         lastFullSlotEndTime, empty)         = self.genBatLevelForecast(state, now, percentileIndex)
@@ -616,6 +622,19 @@ class PowerControlCore():
                 # expensive electricity when there's cheaper electriticy available later.
                 if lastFullSlotEndTime:
                     willCharge = willCharge and chargeRate[1] >= lastFullSlotEndTime
+                # We also don't want to run the house of the grid if the slot we go empty on is the same cost 
+                # as the slot we're evaluating. Instead we just let the battery go flat in this case as we 
+                # might not actually end up using that much power to flatten it if the usage forecast is 
+                # pesermistic.                    
+                if firstEmptySlot and willCharge:
+                    minAvailableRate = min(min(map(lambda x: x[2], availableChargeRatesLocal)), 
+                                           min(map(lambda x: x[2], availableImportRatesLocal)),
+                                           min(map(lambda x: x[2], availableHouseGridPoweredRatesLocal)))
+                    emptySlotCost    = next(filter(lambda x: x[1] == firstEmptySlot, self.originalImportRateData), None)[2]
+                    # We use the raw charge rate instead of chargeCost here because to do a like for like 
+                    # comparison we don't want to take into account the battery efficency when comparing the
+                    # rates (as it's not factored into minAvailableRate).
+                    willCharge       = willCharge and ((chargeRate[2] < emptySlotCost) or (chargeRate[2] == minAvailableRate))
                 if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
                     powerMed  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1])

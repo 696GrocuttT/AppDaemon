@@ -73,13 +73,13 @@ class PowerControl(hass.Hass):
         self.parseSolar()
         # Setup getting the export rates
         exportRateEntityName      = self.args['exportRateEntity']
-        rawRateData               = self.get_state(exportRateEntityName, attribute='rates')
-        self.listen_state(self.exportRatesChanged, exportRateEntityName, attribute='rates') 
+        rawRateData               = self.get_state(exportRateEntityName, attribute='all_rates')
+        self.listen_state(self.exportRatesChanged, exportRateEntityName, attribute='all_rates') 
         self.core.exportRateData  = self.parseRates(rawRateData, "export") or []
         # same again for the import rate
         importRateEntityName      = self.args['importRateEntity']
-        rawRateData               = self.get_state(importRateEntityName, attribute='rates')
-        self.listen_state(self.importRatesChanged, importRateEntityName, attribute='rates') 
+        rawRateData               = self.get_state(importRateEntityName, attribute='all_rates')
+        self.listen_state(self.importRatesChanged, importRateEntityName, attribute='all_rates') 
         self.core.importRateData  = self.parseRates(rawRateData, "import") or []
         # Setup getting batter stats        
         batteryCapacityEntityName = self.args['batteryCapacity']
@@ -387,9 +387,9 @@ class PowerControl(hass.Hass):
         self.log("Updating " + type + " tariff rates")
         rateData = None
         if rawRateData:
-            rateData = list(map(lambda x: (datetime.fromisoformat(x['from']).astimezone(),
-                                           datetime.fromisoformat(x['to']).astimezone(), 
-                                           x['rate']/100), 
+            rateData = list(map(lambda x: (datetime.fromisoformat(x['valid_from']).astimezone(),
+                                           datetime.fromisoformat(x['valid_to']).astimezone(), 
+                                           x['value_inc_vat']/100), 
                                 rawRateData))
             override = self.tariffOverrides[type]
             if override:

@@ -140,7 +140,7 @@ class PowerControlCore():
         self.gasRate                  = 0
         self.batFullPctHysteresis     = 3
         self.batEfficiency            = 0.9
-        self.futureTimeWindow         = timedelta(hours=24)
+        self.futureTimeWindow         = timedelta(hours=28)
         self.stateSavesPath           = "/conf/stateSaves"
         self.solarData                = []
         self.exportRateData           = []

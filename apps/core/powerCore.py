@@ -627,9 +627,15 @@ class PowerControlCore():
                 # might not actually end up using that much power to flatten it if the usage forecast is 
                 # pesermistic.                    
                 if firstEmptySlot and willCharge:
-                    minAvailableRate = min(min(map(lambda x: x[2], availableChargeRatesLocal)), 
-                                           min(map(lambda x: x[2], availableImportRatesLocal)),
-                                           min(map(lambda x: x[2], availableHouseGridPoweredRatesLocal)))
+                    # Calculate the minimum change cost available taking into account the fact that some list 
+                    # of rates may be empty
+                    minAvailableRate = math.inf
+                    if availableChargeRatesLocal:
+                        minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableChargeRatesLocal)))
+                    if availableImportRatesLocal:
+                        minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableImportRatesLocal)))
+                    if availableHouseGridPoweredRatesLocal:
+                        minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableHouseGridPoweredRatesLocal)))
                     emptySlotCost    = next(filter(lambda x: x[1] == firstEmptySlot, self.originalImportRateData), None)[2]
                     # We use the raw charge rate instead of chargeCost here because to do a like for like 
                     # comparison we don't want to take into account the battery efficency when comparing the

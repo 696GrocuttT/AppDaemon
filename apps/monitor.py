@@ -96,7 +96,8 @@ class SystemMonitor(hass.Hass):
                     curAlertLevel = priority
         messages    = sorted(messages.items(), key=lambda item: item[1], reverse=True)
         renderedTxt =  "\\n".join(map(lambda x: x[0] , messages))
-        self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt})
+        markdownTxt =  "<br/>".join(map(lambda x: x[0] , messages))
+        self.set_state(self.outputEntity, state=renderedTxt[0:255], attributes={"fullText": renderedTxt, "markdownText": markdownTxt})
         if self.alertEntity:
             now       = datetime.now()
             isDay     = (now.hour > 6) and (now.hour < 22)

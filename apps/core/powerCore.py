@@ -105,7 +105,8 @@ class BatteryAllocateState():
         exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeToGridPlan,      lambda a, b: a + b)
         exportProfile = self.core.opOnSeries(exportProfile,     self.eddiPlan,                 lambda a, b: a - b)
         exportCosts   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: a * b)
-        exportProfile = self.core.combineSeries(exportProfile,  exportCosts)
+        exportRates   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: b)
+        exportProfile = self.core.combineSeries(exportProfile,  exportCosts,                   exportRates)
         return list(filter(lambda x: x[2], exportProfile))
 
 
@@ -117,7 +118,8 @@ class BatteryAllocateState():
         importProfile = self.core.opOnSeries(importProfile,       self.houseGridPoweredPlan, lambda a, b: a + b)
         importProfile = self.core.opOnSeries(importProfile,       usageWhenGridChanging,     lambda a, b: a + b)
         importCosts   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: a * b)
-        importProfile = self.core.combineSeries(importProfile,    importCosts)
+        importRates   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: b)
+        importProfile = self.core.combineSeries(importProfile,    importCosts,               importRates)
         return list(filter(lambda x: x[2], importProfile))
 
 

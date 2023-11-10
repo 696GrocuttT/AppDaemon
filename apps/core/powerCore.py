@@ -817,6 +817,7 @@ class PowerControlCore():
         solarChargeExportRates    = self.opOnSeries(potentialSolarChargeSlots, exportRateData, lambda a, b: b)
         maxSolarChargeCost        = max(map(lambda x: x[2] / self.batEfficiency, solarChargeExportRates), default=0)
         topUpMaxCost              = min(maxSolarChargeCost, minImportChargeRate)
+        topUpMaxCost              = topUpMaxCost * float(self.args.get('topUpCostTolerance', 1))
         self.allocateChangingSlots(batAllocateState, now, maxImportRate, topUpMaxCost)    
 
         soc = self.convertToAppPercentage((self.batteryEnergy / self.batteryCapacity) * 100)

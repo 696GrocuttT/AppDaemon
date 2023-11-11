@@ -131,7 +131,8 @@ class PowerControlCore():
         self.maxChargeRate            = float(args['batteryChargeRateLimit'])
         self.maxDischargeRate         = float(args['batteryDischargeRateLimit'])
         self.batteryGridChargeRate    = float(args['batteryGridChargeRate'])
-        self.batReservePct            = float(args['batteryReservePercentage'])
+        self.batTargetReservePct      = float(args['batteryTargetReservePercentage'])
+        self.batAbsMinReservePct      = float(args['batteryAbsMinReservePercentage'])
         self.batFullPct               = float(args['batteryFullPercentage'])
         self.gasEfficiency            = float(args['gasHotWaterEfficiency'])
         self.eddiTargetPower          = float(args['eddiTargetPower'])
@@ -479,12 +480,14 @@ class PowerControlCore():
         # For full charge detection we compare against 99% full, this is so any minor changes 
         # is battery capacity or energe when we're basically fully charged, and won't charge 
         # any more, don't cause any problems.
-        batFullPct       = min(self.batFullPct, 99)
-        batReserveEnergy = self.batteryCapacity * (self.convertToRealPercentage(self.batReservePct) / 100)
-        batteryRemaining = self.batteryEnergy
-        emptyInAnySlot   = False
-        fullInAnySlot    = False
-        totChargeEnergy  = 0.0
+        batFullPct            = min(self.batFullPct, 99)
+        batTargetResEnergy    = self.batteryCapacity * (self.convertToRealPercentage(self.batTargetReservePct) / 100)
+        batAbsMinResEnergy    = self.batteryCapacity * (self.convertToRealPercentage(self.batAbsMinReservePct) / 100)
+        batteryRemaining      = self.batteryEnergy
+        emptyInAnySlot        = False
+        totallyEmptyInAnySlot = False
+        fullInAnySlot         = False
+        totChargeEnergy       = 0.0
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(state.exportRateData):
             chargeEnergy     = (self.powerForPeriod(state.solarChargingPlan,        rate[0], rate[1], percentileIndex) +
@@ -496,20 +499,26 @@ class PowerControlCore():
                                 self.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1]))
             totChargeEnergy  = totChargeEnergy + chargeEnergy
             fullyChanged     = batteryRemaining >= self.batteryCapacity
-            empty            = batteryRemaining <= batReserveEnergy
+            empty            = batteryRemaining <= batTargetResEnergy
+            totallyEmpty     = batteryRemaining <= batAbsMinResEnergy
             if fullyChanged:
                 fullInAnySlot    = True
                 batteryRemaining = self.batteryCapacity
             if empty:
                 emptyInAnySlot   = True
-                batteryRemaining = batReserveEnergy
+            if totallyEmpty:      
+                totallyEmptyInAnySlot = True
+                batteryRemaining      = batAbsMinResEnergy
             pct = round(self.convertToAppPercentage((batteryRemaining / self.batteryCapacity) * 100), 1)
             state.batProfile.append((rate[0], rate[1], batteryRemaining, fullyChanged, empty, pct))
            
-        # calculate the end time of the last fully charged slot
+        # calculate the end time of the last fully charged and empty slots
         lastFullSlotEndTime = None
         if fullInAnySlot:
             lastFullSlotEndTime = next(filter(lambda x: x[3], reversed(state.batProfile)))[1]
+        lastEmptySlotEndTime = None
+        if emptyInAnySlot:
+            lastEmptySlotEndTime = next(filter(lambda x: x[4], reversed(state.batProfile)))[1]
         # We need to work out if the battery is fully charged in a time slot after 4pm on the
         # last day of the forecast. When calculating the battery full energy we add a bit of
         # hysteresis based on whether there are any charge slots in the current plan before midday. 
@@ -530,7 +539,7 @@ class PowerControlCore():
         if not fullChargeAfterTargetTime:
             if self.batteryEnergy > batFullEnergy and now >= lastTargetFullTime:
                 fullChargeAfterTargetTime = True
-        return (lastTargetFullTime, fullChargeAfterTargetTime, lastFullSlotEndTime, emptyInAnySlot)
+        return (lastTargetFullTime, fullChargeAfterTargetTime, lastFullSlotEndTime, emptyInAnySlot, totallyEmptyInAnySlot, lastEmptySlotEndTime)
 
 
     def chooseRate(self, rateA, rateB, notAfterTime):
@@ -585,13 +594,23 @@ class PowerControlCore():
         # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
         availableChargeRatesLocal           = self.opOnSeries(nonZeroSolarSurplus,       state.availableChargeRates, lambda a, b: b)        
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
-        (fullEndTimeThresh, fullyCharged, 
-        lastFullSlotEndTime, empty)         = self.genBatLevelForecast(state, now, percentileIndex)
+        (fullEndTimeThresh,   fullyCharged, 
+         lastFullSlotEndTime, empty, 
+         totallyEmptyInAnySlot, 
+         lastEmptySlotEndTime)              = self.genBatLevelForecast(state, now, percentileIndex)
         # initialise the allow empty before variable to the start of the profile so it has no effect to start with
         allowEmptyBefore                    = state.batProfile[0][0]
         maxAllowedChargeCost                = topUpToChargeCost if topUpToChargeCost else math.inf
-        while empty or topUpToChargeCost or not fullyCharged:
-            # If the battery has gone flat during at any point, make sure the charging slot we search for is before the point it went flat
+        # Define helper function to check if charging is required, this is so we can be sure to apply
+        # the same formula in multiple place
+        def chargeRequired(empty, topUpToChargeCost, fullyCharged):
+            return empty or topUpToChargeCost or not fullyCharged
+        
+        # Keep searching for a slot while there's a need for it, using the common healper function 
+        # defined above 
+        while chargeRequired(empty, topUpToChargeCost, fullyCharged):
+            # If the battery has gone flat during at any point, make sure the charging slot we search
+            # for is before the point it went flat
             chargeBefore   = None
             firstEmptySlot = None
             if empty:
@@ -624,11 +643,20 @@ class PowerControlCore():
                 # expensive electricity when there's cheaper electriticy available later.
                 if lastFullSlotEndTime:
                     willCharge = willCharge and chargeRate[1] >= lastFullSlotEndTime
+                # Similarly, its only worth charging in a slot if the reason for charging isn't just that 
+                # we're empty, or if the charge slot is before the point we go empty
+                if lastEmptySlotEndTime:
+                    willCharge = willCharge and (chargeRate[1] <= lastEmptySlotEndTime or chargeRequired(False, topUpToChargeCost, fullyCharged))                
                 # We also don't want to run the house of the grid if the slot we go empty on is the same cost 
                 # as the slot we're evaluating. Instead we just let the battery go flat in this case as we 
                 # might not actually end up using that much power to flatten it if the usage forecast is 
-                # pesermistic.                    
-                if firstEmptySlot and willCharge:
+                # pesermistic. When it reaches the absolute empty threshold we don't do this any more and must
+                # force at least running the house from the grid. If we don't have the totallyEmptyInAnySlot 
+                # term in the conditition then the algorithm can treat the battery as an infinite store of
+                # energy and keep running it off an empty battery forever. This in itself isn't a problem as 
+                # the house will naturally pull from the grid when the battery gives up, but it has knockon
+                # effects on the charge cost etc that breaks other aspects of the system.                    
+                if firstEmptySlot and willCharge and not totallyEmptyInAnySlot:
                     # Calculate the minimum change cost available taking into account the fact that some list 
                     # of rates may be empty
                     minAvailableRate = math.inf
@@ -733,8 +761,8 @@ class PowerControlCore():
                 if willCharge:
                     state.updateChangeCost(chargeCost)
                     # update the battery profile based on the new charging plan
-                    (_, fullyCharged, 
-                     lastFullSlotEndTime, empty) = self.genBatLevelForecast(state, now, percentileIndex)   
+                    (_, fullyCharged, lastFullSlotEndTime, empty, 
+                     totallyEmptyInAnySlot, lastEmptySlotEndTime) = self.genBatLevelForecast(state, now, percentileIndex)   
             elif firstEmptySlot:
                 # If the battery gets empty then the code above we restrict the search for a charging 
                 # slot to the time before it gets empty. This can result in not finding a charge slot. 

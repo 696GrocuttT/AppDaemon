@@ -673,17 +673,10 @@ class PowerControlCore():
                     willCharge       = willCharge and ((chargeRate[2] < emptySlotCost) or (chargeRate[2] == minAvailableRate))
                     
                 def gridUsageAllowed():
-                    # We don't want to buy power from the grid if we're not going going empty, just to top up the 
-                    # battery for the sake of it. So we only allow grid charging to fill the battery if there's
-                    # solar slots left that we can export at a higher price than the grid import. Because the
-                    # chooseRate3() function will always choose the cheapest slot available. This boils down 
-                    # to just checking that there are solar charge slots still available. The exception to this 
-                    # is if we've been asked to top up to an explicit charge cost.
-                    gridAllowed = (availableChargeRatesLocal or topUpToChargeCost) and not firstEmptySlot
                     # Don't run the house on grid power if the slot is the max grid powered price, we might as
                     # well just let the battery go flat, and in some cases due to the margins we wouldn't actually
                     # end up using that much grid power as we'd pre-planned it.
-                    return gridAllowed and belowMaxImportRate
+                    return belowMaxImportRate
                 
                 if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
@@ -707,10 +700,11 @@ class PowerControlCore():
                 elif rateId == 1: # grid charge
                     willCharge = willCharge and gridUsageAllowed()
                     # We don't want to end up charging the battery when its cheaper to just run the house 
-                    # directly from the grid. So if the battery is going to be empty, check what the 
-                    # electricity import rate is for the slot where it goes empty and compare that to the
-                    # cheapest charge rate we've found to determine if we should use this charge rate or not.
-                    if firstEmptySlot:
+                    # directly from the grid. So if the battery is going to be empty (and that's the only 
+                    # reason we're looking for a charge slot), check what the electricity import rate is for
+                    # the slot where it goes empty and compare that to the cheapest charge rate we've found
+                    # to determine if we should use this charge rate or not.
+                    if firstEmptySlot and not chargeRequired(False, topUpToChargeCost, fullyCharged):
                         emptySlotCost = next(filter(lambda x: x[1] == firstEmptySlot, self.originalImportRateData), None)[2]
                         cheapEnough   = (chargeCost <= emptySlotCost - self.minBuyUseMargin)
                         # If we're not using the slot because its not cheap enough, then we shouldn't remove

@@ -243,7 +243,7 @@ class PowerControlCore():
         return mergedSeries
         
 
-    def seriesToString(self, series, mergeable=False):
+    def seriesToString(self, series, newLineStr, mergeable=False):
         if mergeable:
             series = self.mergeSeries(series)
         formatStr = "{0:%d %B %H:%M} -> {1:%H:%M} :"
@@ -256,11 +256,11 @@ class PowerControlCore():
                 else:
                     formatStr = formatStr + " {{{0}}}".format(valueIdx)            
         strings = map(lambda x: formatStr.format(*x), series)
-        return "\n".join(strings)
+        return newLineStr.join(strings)
 
 
     def printSeries(self, series, title, mergeable=False):
-        self.log(title + ":\n" + self.seriesToString(series, mergeable))
+        self.log(title + ":\n" + self.seriesToString(series, "\n", mergeable))
 
 
     def opOnSeries(self, a, b, operation, aValueIdxOffset=0, bValueIdxOffset=0):

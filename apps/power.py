@@ -187,17 +187,17 @@ class PowerControl(hass.Hass):
         self.set_state(self.batteryPlanSummaryEntityName, state=summary)
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
-                                                                                     "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, mergeable=True),
-                                                                                     "dischargeToGridInfo":      self.core.seriesToString(self.core.dischargeToGridPlan,      mergeable=True),
-                                                                                     "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        mergeable=True),
-                                                                                     "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         mergeable=True),
-                                                                                     "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     mergeable=True),
-                                                                                     "standbyPlan":              self.core.seriesToString(self.core.standbyPlan,              mergeable=True),
+                                                                                     "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),
+                                                                                     "dischargeToGridInfo":      self.core.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
+                                                                                     "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        "<br/>", mergeable=True),
+                                                                                     "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         "<br/>", mergeable=True),
+                                                                                     "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     "<br/>", mergeable=True),
+                                                                                     "standbyPlan":              self.core.seriesToString(self.core.standbyPlan,              "<br/>", mergeable=True),
                                                                                      "tariff":                   self.core.pwTariff,
                                                                                      "defPrice":                 self.core.defPrice})
         self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
-                                                                                     "plan":                     self.core.seriesToString(self.core.eddiPlan, mergeable=True)})
+                                                                                     "plan":                     self.core.seriesToString(self.core.eddiPlan, "<br/>", mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)

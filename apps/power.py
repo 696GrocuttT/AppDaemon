@@ -189,6 +189,7 @@ class PowerControl(hass.Hass):
                                                                                      "stateUpdateTime":          now,
                                                                                      "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),
                                                                                      "dischargeToGridPlan":      self.core.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
+                                                                                     "dischargeToHousePlan":     self.core.seriesToString(self.core.dischargeToHousePlan,     "<br/>", mergeable=True),
                                                                                      "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        "<br/>", mergeable=True),
                                                                                      "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         "<br/>", mergeable=True),
                                                                                      "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     "<br/>", mergeable=True),

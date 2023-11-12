@@ -188,7 +188,7 @@ class PowerControl(hass.Hass):
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
                                                                                      "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),
-                                                                                     "dischargeToGridInfo":      self.core.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
+                                                                                     "dischargeToGridPlan":      self.core.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
                                                                                      "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        "<br/>", mergeable=True),
                                                                                      "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         "<br/>", mergeable=True),
                                                                                      "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     "<br/>", mergeable=True),

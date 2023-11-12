@@ -671,6 +671,20 @@ class PowerControlCore():
                     # comparison we don't want to take into account the battery efficency when comparing the
                     # rates (as it's not factored into minAvailableRate).
                     willCharge       = willCharge and ((chargeRate[2] < emptySlotCost) or (chargeRate[2] == minAvailableRate))
+                    
+                def gridUsageAllowed():
+                    # We don't want to buy power from the grid if we're not going going empty, just to top up the 
+                    # battery for the sake of it. So we only allow grid charging to fill the battery if there's
+                    # solar slots left that we can export at a higher price than the grid import. Because the
+                    # chooseRate3() function will always choose the cheapest slot available. This boils down 
+                    # to just checking that there are solar charge slots still available. The exception to this 
+                    # is if we've been asked to top up to an explicit charge cost.
+                    gridAllowed = (availableChargeRatesLocal or topUpToChargeCost) and not firstEmptySlot
+                    # Don't run the house on grid power if the slot is the max grid powered price, we might as
+                    # well just let the battery go flat, and in some cases due to the margins we wouldn't actually
+                    # end up using that much grid power as we'd pre-planned it.
+                    return gridAllowed and belowMaxImportRate
+                
                 if rateId == 0: # solar
                     maxCharge = timeInSlot * self.maxChargeRate
                     powerMed  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1])
@@ -691,9 +705,7 @@ class PowerControlCore():
                     # function for other types of activity
                     availableChargeRatesLocal.remove(chargeRate)
                 elif rateId == 1: # grid charge
-                    # Don't charge off the max grid powered slot, its better to just let the battery go flat 
-                    # in this case. 
-                    willCharge = willCharge and belowMaxImportRate
+                    willCharge = willCharge and gridUsageAllowed()
                     # We don't want to end up charging the battery when its cheaper to just run the house 
                     # directly from the grid. So if the battery is going to be empty, check what the 
                     # electricity import rate is for the slot where it goes empty and compare that to the
@@ -718,17 +730,10 @@ class PowerControlCore():
                         #     availableImportRatesLocal based on whats in availableImportRatesLocalUnused so we 
                         #     can reconsider slots there were rejected because they weren't cheap enough for 
                         #     the empty slot cost we were considering at the time.
-                        slotUsed      = not willCharge or  cheapEnough
-                        willCharge    =     willCharge and cheapEnough
-                    # We don't want to buy power from the grid if we're going going empty, just to top up the 
-                    # battery for the sake of it. So we only allow grid charging to fill the battery if there's
-                    # solar slots left that we can export at a higher price than the grid import. Because the
-                    # chooseRate3() function will always choose the cheapest slot available. This boils down 
-                    # to just checking that there are solar charge slots still available. The exception to this 
-                    # is if we've been asked to top up to an explicit charge cost.
+                        slotUsed   = not willCharge or  cheapEnough
+                        willCharge =     willCharge and cheapEnough
                     else:
-                        slotUsed   = True
-                        willCharge = willCharge and (availableChargeRatesLocal or topUpToChargeCost)
+                        slotUsed = True
                     # If the charge slot is still valid, add it to the plan now
                     if willCharge:
                         chargeTaken = timeInSlot * self.batteryGridChargeRate
@@ -744,10 +749,7 @@ class PowerControlCore():
                     # Because we're not actually charging the battery, the "chargeCost" is just the rate, and
                     # doesn't take into account the battery efficency.
                     chargeCost = chargeRate[2]
-                    # Don't run the house on grid power if the slot is the max grid powered price, we might as
-                    # well just let the battery go flat, and in some cases due to the margins we wouldn't actually
-                    # end up using that much grid power as we'd pre-planned it.
-                    willCharge = willCharge and belowMaxImportRate
+                    willCharge = willCharge and gridUsageAllowed()
                     if willCharge:
                         usage     = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1])
                         usageLow  = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1], 1)

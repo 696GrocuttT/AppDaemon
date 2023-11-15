@@ -621,9 +621,11 @@ class PowerControlCore():
                     chargeBefore   = firstEmptySlot
             else:
                 percentileIndex = 2
-                # If we're topping up the battery to full, then don't add slots after the full theshold end 
-                # time, as they won't actually help meet the full battery criteria.
-                chargeBefore    = fullEndTimeThresh
+                # If the only reason we're looking for slots is to hit the battery full criteria then 
+                # don't add slots after the full theshold end time, as they won't actually help meet
+                # the full battery criteria.
+                if not chargeRequired(empty, topUpToChargeCost, True):
+                    chargeBefore = fullEndTimeThresh
             # Search for a charging slot
             (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPoweredRatesLocal, chargeBefore)                
             if chargeRate:

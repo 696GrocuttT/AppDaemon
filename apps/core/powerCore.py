@@ -533,9 +533,9 @@ class PowerControlCore():
         batFullEnergy             = self.batteryCapacity * ((self.batFullPct + hysteresis) / 100)
         lastTargetFullTime        = state.batProfile[-1][0].replace(hour=16, minute=30, second=0, microsecond=0)
         fullChargeAfterTargetTime = any(x[0] >= lastTargetFullTime and x[2] >= batFullEnergy for x in state.batProfile)
-        # We also indicate the battery is fully charged if its after midday now, and its currently 
-        # fully charged. This prevents an issue where the current time slot is never allowed to 
-        # discharge if we don't have a charging period for tomorrow mapped out already
+        # We also indicate the battery is fully charged if its after the target time now, and its 
+        # currently fully charged. This prevents an issue where the current time slot is never  
+        # allowed to discharge if we don't have a charging period for tomorrow mapped out already
         if not fullChargeAfterTargetTime:
             if self.batteryEnergy > batFullEnergy and now >= lastTargetFullTime:
                 fullChargeAfterTargetTime = True

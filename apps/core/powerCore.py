@@ -337,6 +337,15 @@ class PowerControlCore():
         importRateData              = list(filter(lambda x: x[1] <= exportRateEndTime, importRateData))
         self.originalExportRateData = list(exportRateData)
         self.originalImportRateData = list(importRateData)
+        # Apply any tariff overrides
+        if self.tariffOverrideType == "Export":
+            for (index, rate) in enumerate(exportRateData):
+                if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
+                    exportRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
+        elif self.tariffOverrideType == "Import":
+            for (index, rate) in enumerate(importRateData):
+                if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
+                    importRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
 
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 

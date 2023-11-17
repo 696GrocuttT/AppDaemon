@@ -92,6 +92,19 @@ class PowerControl(hass.Hass):
         gasRateEntityName = self.args['gasRateEntity']
         self.gasRateChanged(None, None, math.nan, self.get_state(gasRateEntityName), None)
         self.listen_state(self.gasRateChanged, gasRateEntityName) 
+        # Gets tariff override details
+        tariffOverrideStartEntityName = self.args['tariffOverrideStart']
+        tariffOverrideEndEntityName   = self.args['tariffOverrideEnd']
+        tariffOverridePriceEntityName = self.args['tariffOverridePrice']
+        tariffOverrideTypeEntityName  = self.args['tariffOverrideType']
+        self.tariffOverrideStartChanged(None, None, None, self.get_state(tariffOverrideStartEntityName,  attribute='timestamp'), None)
+        self.tariffOverrideEndChanged(None,   None, None, self.get_state(tariffOverrideEndEntityName,    attribute='timestamp'), None)
+        self.tariffOverridePriceChanged(None, None, None, self.get_state(tariffOverridePriceEntityName), None)
+        self.tariffOverrideTypeChanged(None,  None, None, self.get_state(tariffOverrideTypeEntityName),  None)
+        self.listen_state(self.tariffOverrideStartChanged, tariffOverrideStartEntityName, attribute='timestamp') 
+        self.listen_state(self.tariffOverrideEndChanged,   tariffOverrideEndEntityName,   attribute='timestamp') 
+        self.listen_state(self.tariffOverridePriceChanged, tariffOverridePriceEntityName) 
+        self.listen_state(self.tariffOverrideTypeChanged,  tariffOverrideTypeEntityName) 
         # Schedule an update of the usage forcast every 6 hours
         self.run_every(self.updateUsageHistory, "now", 6*60*60)
         # Schedule the solar production recording and output update for 30 mintues, on the half hour boundary.
@@ -277,7 +290,34 @@ class PowerControl(hass.Hass):
                 new = override.get(new, new)
             self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(float(old), new))
             self.core.gasRate = new
-                    
+
+
+    def tariffOverrideStartChanged(self, entity, attribute, old, new, kwargs):
+        new = datetime.fromtimestamp(int(new)).astimezone(timezone.utc)
+        self.log("Tariff override start {0}".format(new))
+        self.core.tariffOverrideStart = new
+
+
+    def tariffOverrideEndChanged(self, entity, attribute, old, new, kwargs):
+        new = datetime.fromtimestamp(int(new)).astimezone(timezone.utc) 
+        self.log("Tariff override end {0}".format(new))
+        self.core.tariffOverrideEnd = new
+        
+
+    def tariffOverridePriceChanged(self, entity, attribute, old, new, kwargs):
+        new = self.core.toFloat(new, None)
+        if new != None:
+            self.log("Tariff override price {0:.3f}".format(new))
+            self.core.tariffOverridePrice = new
+
+
+    def tariffOverrideTypeChanged(self, entity, attribute, old, new, kwargs):
+        self.log("Tariff override type {0}".format(new))
+        self.core.tariffOverrideType = new
+        # only update the plan if this isn't the initial call during app boot.
+        if old:
+            self.updateOutputs(None)
+
         
     def batteryCapacityChanged(self, entity, attribute, old, new, kwargs):
         new = float(new) / 1000

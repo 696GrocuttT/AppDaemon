@@ -805,12 +805,13 @@ class PowerControlCore():
         # Now we have a change plan, see if we can swap some of the slots to discharge to the grid to improve the
         # income
         def dischargeGridExportSlotTest(state, slot):
-            newState            = None
-            timeInSlot          = (slot[1] - slot[0]).total_seconds() / (60 * 60)
-            maxExportForSlot    = timeInSlot * self.gridExportLimit
-            maxDischargeForSlot = timeInSlot * self.maxDischargeRate
-            solarSurplusForSlot = self.powerForPeriod(state.solarSurplus, slot[0], slot[1])
-            dischargeForSlot    = min(maxDischargeForSlot, max(0, maxExportForSlot - solarSurplusForSlot))
+            newState               = None
+            timeInSlot             = (slot[1] - slot[0]).total_seconds() / (60 * 60)
+            maxExportForSlot       = timeInSlot * self.gridExportLimit
+            maxDischargeForSlot    = timeInSlot * self.maxDischargeRate
+            solarSurplusForSlot    = self.powerForPeriod(state.solarSurplus,    slot[0], slot[1])
+            usageAfterSolarForSlot = self.powerForPeriod(state.usageAfterSolar, slot[0], slot[1])
+            dischargeForSlot       = min(maxDischargeForSlot - usageAfterSolarForSlot, max(0, maxExportForSlot - solarSurplusForSlot))
             if dischargeForSlot > 0:
                 newState = state.copy()
                 newState.dischargeToGridPlan.append((slot[0], slot[1], dischargeForSlot))

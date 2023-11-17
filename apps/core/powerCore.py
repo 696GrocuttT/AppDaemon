@@ -139,6 +139,7 @@ class PowerControlCore():
         self.eddiPowerLimit           = float(args['eddiPowerLimit'])
         self.gridExportLimit          = float(args['gridExportLimit']) 
         self.minBuySelMargin          = float(args['minBuySelMargin'])
+        self.minBuySelNotFullMargin   = float(args['minBuySelNotFullMargin'])
         self.minBuyUseMargin          = float(args['minBuyUseMargin'])
         self.gasRate                  = 0
         self.batFullPctHysteresis     = 3
@@ -909,7 +910,9 @@ class PowerControlCore():
                 newMaxHouseRateForEmpty = self.maxHouseRateForEmpty(newBatAllocateState)
                 if newMaxHouseRateForEmpty != None:
                     newMaxCostRate = max(newBatAllocateState.maxChargeCost, newMaxHouseRateForEmpty)
-                if fullyCharged and mostExpenciveRate[2] - newMaxCostRate > self.minBuySelMargin:
+                buySelMargin = mostExpenciveRate[2] - newMaxCostRate
+                reqMargin    = self.minBuySelMargin if fullyCharged else self.minBuySelNotFullMargin
+                if  buySelMargin > reqMargin:
                     batAllocateState.setTo(newBatAllocateState)
                     # We can't discharge for a slot if its already been used as a charge slot. So filter out 
                     # any potential discharge slots if they're not still in the available charge list.

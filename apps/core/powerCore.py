@@ -23,7 +23,8 @@ class BatteryAllocateState():
         self.houseGridPoweredPlan     = []
         self.dischargeExportSolarPlan = []
         self.dischargeToGridPlan      = []
-        self.eddiPlan                 = []
+        self.eddiSolarPlan            = []
+        self.eddiGridPlan             = []
         self.maxChargeCost            = core.maxChargeCost
         self.solarSurplus             = solarSurplus
         self.usageAfterSolar          = usageAfterSolar
@@ -56,7 +57,8 @@ class BatteryAllocateState():
         self.houseGridPoweredPlan.sort(key=lambda x: x[0])
         self.dischargeExportSolarPlan.sort(key=lambda x: x[0])
         self.dischargeToGridPlan.sort(key=lambda x: x[0])
-        self.eddiPlan.sort(key=lambda x: x[0])
+        self.eddiSolarPlan.sort(key=lambda x: x[0])
+        self.eddiGridPlan.sort(key=lambda x: x[0])
 
 
     def setTo(self, fromState):
@@ -66,7 +68,8 @@ class BatteryAllocateState():
         self.houseGridPoweredPlan           = fromState.houseGridPoweredPlan
         self.dischargeExportSolarPlan       = fromState.dischargeExportSolarPlan
         self.dischargeToGridPlan            = fromState.dischargeToGridPlan
-        self.eddiPlan                       = fromState.eddiPlan
+        self.eddiSolarPlan                  = fromState.eddiSolarPlan
+        self.eddiGridPlan                   = fromState.eddiGridPlan
         self.maxChargeCost                  = fromState.maxChargeCost
         self.availableChargeRates           = fromState.availableChargeRates
         self.availableImportRates           = fromState.availableImportRates
@@ -85,7 +88,8 @@ class BatteryAllocateState():
         newState.houseGridPoweredPlan           = list(newState.houseGridPoweredPlan)
         newState.dischargeExportSolarPlan       = list(newState.dischargeExportSolarPlan)
         newState.dischargeToGridPlan            = list(newState.dischargeToGridPlan)
-        newState.eddiPlan                       = list(newState.eddiPlan)
+        newState.eddiSolarPlan                  = list(newState.eddiSolarPlan)
+        newState.eddiGridPlan                   = list(newState.eddiGridPlan)
         newState.availableChargeRates           = list(newState.availableChargeRates)
         newState.availableImportRates           = list(newState.availableImportRates)
         newState.availableHouseGridPoweredRates = list(newState.availableHouseGridPoweredRates)
@@ -103,7 +107,7 @@ class BatteryAllocateState():
         exportProfile = self.core.opOnSeries(exportProfile,     self.solarChargingPlan,        lambda a, b: a - b)
         exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeExportSolarPlan, lambda a, b: a + b)
         exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeToGridPlan,      lambda a, b: a + b)
-        exportProfile = self.core.opOnSeries(exportProfile,     self.eddiPlan,                 lambda a, b: a - b)
+        exportProfile = self.core.opOnSeries(exportProfile,     self.eddiSolarPlan,            lambda a, b: a - b)
         exportCosts   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: a * b)
         exportRates   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: b)
         exportProfile = self.core.combineSeries(exportProfile,  exportCosts,                   exportRates)
@@ -117,6 +121,7 @@ class BatteryAllocateState():
         importProfile = self.core.opOnSeries(self.importRateData, self.gridChargingPlan,     lambda a, b: b if a else 0)
         importProfile = self.core.opOnSeries(importProfile,       self.houseGridPoweredPlan, lambda a, b: a + b)
         importProfile = self.core.opOnSeries(importProfile,       usageWhenGridChanging,     lambda a, b: a + b)
+        importProfile = self.core.opOnSeries(importProfile,       self.eddiGridPlan,         lambda a, b: a + b)
         importCosts   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: a * b)
         importRates   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: b)
         importProfile = self.core.combineSeries(importProfile,    importCosts,               importRates)
@@ -157,7 +162,8 @@ class PowerControlCore():
         self.dischargeExportSolarPlan = []
         self.dischargeToGridPlan      = []
         self.dischargeToHousePlan     = []
-        self.eddiPlan                 = []
+        self.eddiSolarPlan            = []
+        self.eddiGridPlan             = []
         self.planUpdateTime           = None
 
 
@@ -397,7 +403,7 @@ class PowerControlCore():
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
-        batPlans.eddiPlan = self.calculateEddiPlan(exportRateData, postBatteryChargeSurplus, batPlans.solarChargingPlan)
+        self.calculateEddiPlan(exportRateData, importRateData, postBatteryChargeSurplus, batPlans)
         self.printSeries(batPlans.exportProfile(), "Export profile - post eddi")
         self.printSeries(batPlans.importProfile(), "Import profile - post eddi")
         
@@ -424,7 +430,8 @@ class PowerControlCore():
         self.printSeries(batPlans.dischargeExportSolarPlan, "Discharge export solar plan", mergeable=True)
         self.printSeries(batPlans.dischargeToGridPlan,      "Discharge to grid plan",      mergeable=True)
         self.printSeries(dischargeToHousePlan,              "Discharging to house plan",   mergeable=True)
-        self.printSeries(batPlans.eddiPlan,                 "Eddi plan",                   mergeable=True)
+        self.printSeries(batPlans.eddiSolarPlan,            "Eddi solar plan",             mergeable=True)
+        self.printSeries(batPlans.eddiGridPlan,             "Eddi grid plan",              mergeable=True)
         self.solarChargingPlan        = batPlans.solarChargingPlan
         self.gridChargingPlan         = batPlans.gridChargingPlan
         self.houseGridPoweredPlan     = batPlans.houseGridPoweredPlan
@@ -432,7 +439,8 @@ class PowerControlCore():
         self.dischargeExportSolarPlan = batPlans.dischargeExportSolarPlan
         self.dischargeToGridPlan      = batPlans.dischargeToGridPlan
         self.dischargeToHousePlan     = dischargeToHousePlan
-        self.eddiPlan                 = batPlans.eddiPlan
+        self.eddiSolarPlan            = batPlans.eddiSolarPlan
+        self.eddiGridPlan             = batPlans.eddiGridPlan
         self.planUpdateTime           = now
         
 
@@ -440,37 +448,57 @@ class PowerControlCore():
         return self.gasRate / self.gasEfficiency
 
 
-    def calculateEddiPlan(self, exportRateData, solarSurplus, batterSolarChangePlan):
+    def calculateEddiPlan(self, exportRateData, importRateData, solarSurplus, batPlans):
         # Calculate the target rate for the eddi
-        eddiPlan          = []
+        eddiSolarPlan     = []
+        eddiGridPlan      = []
         eddiTargetRate    = self.eddiTargetRate()
         eddiPowerRequired = self.eddiTargetPower - self.eddiPowerUsedToday
-        ratesCheapFirst   = sorted(exportRateData, key=lambda x: x[2])
+        # For any slots where we're planning to run off the grid we also have the opertunity to 
+        # eddi off the grid without draining the battery. Calculate the available slots that 
+        # could be used.
+        gridUseRates      =                self.opOnSeries(batPlans.houseGridPoweredPlan, importRateData, lambda a, b: b)
+        gridUseRates      = gridUseRates + self.opOnSeries(batPlans.gridChargingPlan,     importRateData, lambda a, b: b)
+        gridUseRates      = list(map(lambda a: (a[0], a[1], a[2], False), gridUseRates))
+        # combine with the export rates for solar and sort based on price        
+        solarSurplus      = list(filter(lambda x: x[2], solarSurplus))
+        solarSurplusRates = self.opOnSeries(solarSurplus, exportRateData, lambda a, b: b)
+        solarSurplusRates = list(map(lambda a: (a[0], a[1], a[2], True), solarSurplusRates))
+        ratesCheapFirst   = sorted(gridUseRates + solarSurplusRates, key=lambda x: x[2])
+        # Create the eddi plan by looking for rates that are below the threshold where gas 
+        # becomes a better option
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:
                 break
             maxPower   = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
-            power      = self.powerForPeriod(solarSurplus, rate[0], rate[1])
-            powerTaken = max(min(power, maxPower), 0)
-            # We still plan to use the eddi even if the forcast says there won't be a surplus.
-            # This is in case the forcast is wrong, or there are dips in usage or peaks in 
-            # generation that lead to short term surpluses
-            eddiPlan.append((rate[0], rate[1], powerTaken))
-            if power > 0:
-                eddiPowerRequired = eddiPowerRequired - powerTaken
-                if eddiPowerRequired < 0:
-                    break
+            # is this a solar or grid slot
+            if rate[3]:
+                power      = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+                powerTaken = max(min(power, maxPower), 0)
+                # We still plan to use the eddi even if the forcast says there won't be a 
+                # surplus. This is in case the forcast is wrong, or there are dips in usage 
+                # or peaks in generation that lead to short term surpluses
+                eddiSolarPlan.append((rate[0], rate[1], powerTaken))
+            else:
+                # Since this is a grid slot we can pull as much power as we want
+                powerTaken = maxPower
+                eddiGridPlan.append((rate[0], rate[1], powerTaken))
+            eddiPowerRequired = eddiPowerRequired - powerTaken
+            if eddiPowerRequired < 0:
+                break
         # Add on any slots where the battery is charging and the rate is below the threshold. 
         # This means we divert any surplus that wasn't forecast that the battery could change 
         # from. EG if the battery fills up early, or we exceed the battery charge rate.
-        for chargePeriod in batterSolarChangePlan:
+        for chargePeriod in batPlans.solarChargingPlan:
             # If the entry is already in the eddi plan, don't try and add it again
-            if not any(x[0] == chargePeriod[0] for x in eddiPlan):
+            if not any(x[0] == chargePeriod[0] for x in eddiSolarPlan):
                 exportRate = next(filter(lambda x: x[0] == chargePeriod[0], exportRateData))
                 if exportRate[2] <= eddiTargetRate:
-                    eddiPlan.append((chargePeriod[0], chargePeriod[1], 0))
-        eddiPlan.sort(key=lambda x: x[0])
-        return eddiPlan
+                    eddiSolarPlan.append((chargePeriod[0], chargePeriod[1], 0))
+        eddiSolarPlan.sort(key=lambda x: x[0])
+        eddiGridPlan.sort(key=lambda  x: x[0])
+        batPlans.eddiSolarPlan = eddiSolarPlan
+        batPlans.eddiGridPlan  = eddiGridPlan
  
  
     def convertToAppPercentage(self, value):
@@ -552,7 +580,7 @@ class PowerControlCore():
         return (lastTargetFullTime, fullChargeAfterTargetTime, lastFullSlotEndTime, emptyInAnySlot, totallyEmptyInAnySlot, lastEmptySlotEndTime)
 
 
-    def chooseRate(self, rateA, rateB, notAfterTime):
+    def chooseRate(self, rateA, rateB, notAfterTime=None):
         foundRate = []
         isRateA   = None
         # if requested don't use any slots after the specified time
@@ -572,7 +600,7 @@ class PowerControlCore():
         return (foundRate, isRateA)
 
 
-    def chooseRate3(self, rateA, rateB, rateC, notAfterTime):
+    def chooseRate3(self, rateA, rateB, rateC, notAfterTime=None):
         (foundRate, isRateA)  = self.chooseRate(rateA,     rateB, notAfterTime)
         foundRate             = [foundRate] if foundRate else []
         (foundRate, isRateAB) = self.chooseRate(foundRate, rateC, notAfterTime)
@@ -853,7 +881,7 @@ class PowerControlCore():
         potentialSolarChargeSlots = list(filter(lambda x: x[2], batAllocateState.solarSurplus))
         solarChargeExportRates    = self.opOnSeries(potentialSolarChargeSlots, exportRateData, lambda a, b: b)
         maxSolarChargeCost        = max(map(lambda x: x[2] / self.batEfficiency, solarChargeExportRates), default=0)
-        topUpMaxCost              = min(maxSolarChargeCost, minImportChargeRate)
+        topUpMaxCost              = min(maxSolarChargeCost, max(minImportChargeRate, 0))
         topUpMaxCost              = topUpMaxCost * float(self.args.get('topUpCostTolerance', 1))
         self.allocateChangingSlots(batAllocateState, now, maxImportRate, topUpMaxCost)    
 

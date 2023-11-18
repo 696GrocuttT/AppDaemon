@@ -165,8 +165,10 @@ class PowerControl(hass.Hass):
                                     "Standby"            if standbyInfo              else 
                                     "Grid charge"        if gridChargeInfo           else 
                                     "House grid powered" if houseGridPowerdeInfo     else "Solar charge")        
-        eddiInfo                 = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.eddiPlan), None)
-        eddiInfo                 = "on" if eddiInfo else "off"
+        eddiSolarInfo            = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.eddiSolarPlan), None)
+        eddiGridInfo             = next(filter(lambda x: x[0] < slotMidTime and slotMidTime < x[1], self.core.eddiGridPlan),  None)
+        eddiInfo                 = ("boost" if eddiGridInfo  else
+                                    "on"    if eddiSolarInfo else "off")
         # generate a summary string for the combined plan
         summary                  = ( list(map(lambda x: ("D", x[0]), self.core.mergeSeries(self.core.dischargeExportSolarPlan))) +
                                      list(map(lambda x: ("E", x[0]), self.core.mergeSeries(self.core.dischargeToGridPlan)))      +
@@ -211,7 +213,8 @@ class PowerControl(hass.Hass):
                                                                                      "defPrice":                 self.core.defPrice})
         self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
-                                                                                     "plan":                     self.core.seriesToString(self.core.eddiPlan, "<br/>", mergeable=True)})
+                                                                                     "solarPlan":                self.core.seriesToString(self.core.eddiSolarPlan, "<br/>", mergeable=True),
+                                                                                     "gridPlan":                 self.core.seriesToString(self.core.eddiGridPlan,  "<br/>", mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)

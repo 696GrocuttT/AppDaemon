@@ -360,6 +360,7 @@ class PowerControlCore():
         # for each period. We carry this through to the generated series so we can more accuratly 
         # plan the battery charge / house usage.
         usageData       = self.extendSeries(self.usageData, timedelta(), exportRateData[-1][1])
+        usageData       = list(filter(lambda x: x[0] >= exportRateData[0][0] and x[1] <= exportRateData[-1][1], usageData))
         solarSurplus    = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a)), 
                                              self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 1), 
                                              self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 2))

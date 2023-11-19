@@ -11,6 +11,7 @@ import os
 import pickle
 import sys
 import copy
+import functools
 
 
 
@@ -405,8 +406,22 @@ class PowerControlCore():
 
         # Calculate the eddi plan based on any remaining surplus
         self.calculateEddiPlan(exportRateData, importRateData, postBatteryChargeSurplus, batPlans)
-        self.printSeries(batPlans.exportProfile(), "Export profile - post eddi")
-        self.printSeries(batPlans.importProfile(), "Import profile - post eddi")
+        exportProfile  = batPlans.exportProfile()
+        importProfile  = batPlans.importProfile()
+        profileReducer = lambda a, b: (None, None, a[2]+b[2], a[3]+b[3], None)
+        initialVal     = (None, None, 0, 0, None)
+        exportSummary  = functools.reduce(profileReducer, exportProfile, initialVal)
+        importSummary  = functools.reduce(profileReducer, importProfile, initialVal)
+        netSummary     = (None, None, importSummary[2]-exportSummary[2], importSummary[3]-exportSummary[3], None)
+        def summaryFormatter(typeStr, data):
+            rate = 100*data[3]/data[2] if data[2] != 0 else 0
+            return "{3} summary: {0:.2f} kWh @ £{1:.2f} = {2:.2f}p/kWh".format(data[2], data[3], rate, typeStr)
+        
+        self.printSeries(exportProfile, "Export profile - post eddi")
+        self.log(summaryFormatter("Export", exportSummary))
+        self.printSeries(importProfile, "Import profile - post eddi")
+        self.log(summaryFormatter("Import", importSummary))
+        self.log(summaryFormatter("Net",    netSummary))
         
         # Create a fake tariff with peak time covering the discharge plan
         # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 

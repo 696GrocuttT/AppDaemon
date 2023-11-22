@@ -20,32 +20,33 @@ import sys
 class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
-        self.core                         = PowerControlCore(self.args, self.log)
-        self.solarForecastMargin          = float(self.args['solarForecastMargin'])
-        self.solarForecastLowPercentile   = float(self.args['solarForecastLowPercentile'])
-        self.solarForecastHighPercentile  = float(self.args['solarForecastHighPercentile'])
-        self.usageMargin                  = float(self.args['houseLoadMargin'])
-        self.houseLoadEntityName          = self.args['houseLoadEntity']
-        self.usageDaysHistory             = self.args['usageDaysHistory']
-        self.eddiOutputEntityName         = self.args['eddiOutputEntity']
-        self.eddiPowerUsedTodayEntityName = self.args['eddiPowerUsedTodayEntity']
-        self.solarLifetimeProdEntityName  = self.args['solarLifetimeProductionEntity']
-        self.batteryModeOutputEntityName  = self.args['batteryModeOutputEntity']
-        self.batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
-        self.prevMaxChargeCostEntity      = self.args['batteryChargeCostEntity']
-        self.batOutputTimeOffset          = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
-        self.solarTuningDaysHistory       = 14
-        self.solarActualsFileName         = "/conf/solarActuals.json" 
-        self.solarProductionFileName      = "/conf/solarProduction.json" 
-        self.solarTuningPath              = "/conf/solarTuning"
-        self.prevSolarLifetimeProd        = None
-        self.prevSolarLifetimeProdTime    = None
-        self.solarTuningModels            = {}
-        self.rawSolarData                 = []
-        self.solarDataUntuned             = []
-        self.tariffOverrides              = {'gas':    {},
-                                             'export': {},
-                                             'import': {}}
+        self.core                              = PowerControlCore(self.args, self.log)
+        self.solarForecastMargin               = float(self.args['solarForecastMargin'])
+        self.solarForecastLowPercentile        = float(self.args['solarForecastLowPercentile'])
+        self.solarForecastHighPercentile       = float(self.args['solarForecastHighPercentile'])
+        self.usageMargin                       = float(self.args['houseLoadMargin'])
+        self.houseLoadEntityName               = self.args['houseLoadEntity']
+        self.usageDaysHistory                  = self.args['usageDaysHistory']
+        self.eddiOutputEntityName              = self.args['eddiOutputEntity']
+        self.eddiSolarPowerUsedTodayEntityName = self.args['eddiSolarPowerUsedTodayEntity']
+        self.eddiGridPowerUsedTodayEntityName  = self.args['eddiGridPowerUsedTodayEntity']
+        self.solarLifetimeProdEntityName       = self.args['solarLifetimeProductionEntity']
+        self.batteryModeOutputEntityName       = self.args['batteryModeOutputEntity']
+        self.batteryPlanSummaryEntityName      = self.args['batteryPlanSummaryEntity']
+        self.prevMaxChargeCostEntity           = self.args['batteryChargeCostEntity']
+        self.batOutputTimeOffset               = timedelta(seconds=int(self.args['batteryOutputTimeOffset']))
+        self.solarTuningDaysHistory            = 14
+        self.solarActualsFileName              = "/conf/solarActuals.json" 
+        self.solarProductionFileName           = "/conf/solarProduction.json" 
+        self.solarTuningPath                   = "/conf/solarTuning"
+        self.prevSolarLifetimeProd             = None
+        self.prevSolarLifetimeProdTime         = None
+        self.solarTuningModels                 = {}
+        self.rawSolarData                      = []
+        self.solarDataUntuned                  = []
+        self.tariffOverrides                   = {'gas':    {},
+                                                  'export': {},
+                                                  'import': {}}
 
         # Leads the solar actuals if there's available
         self.solarActuals = {}
@@ -147,7 +148,8 @@ class PowerControl(hass.Hass):
         now                          = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo) - self.batOutputTimeOffset
         maxChargeCost                = float(self.get_state(self.prevMaxChargeCostEntity))
         self.core.maxChargeCost      = maxChargeCost
-        self.core.eddiPowerUsedToday = self.core.toFloat(self.get_state(self.eddiPowerUsedTodayEntityName), 0)
+        self.core.eddiPowerUsedToday = ( self.core.toFloat(self.get_state(self.eddiSolarPowerUsedTodayEntityName), 0) +
+                                         self.core.toFloat(self.get_state(self.eddiGridPowerUsedTodayEntityName),  0) )
         self.core.mergeAndProcessData(now)
         self.core.save()
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
@@ -460,9 +462,9 @@ class PowerControl(hass.Hass):
         
     def usageHistoryCallback(self, kwargs):
         self.usagePowerData = kwargs
-        self.get_history(entity_id  = self.eddiPowerUsedTodayEntityName,
+        self.get_history(entity_id  = self.eddiSolarPowerUsedTodayEntityName,
                          start_time = self.usageFetchFromTime,
-                         callback   = self.eddiHistoryCallBack)
+                         callback   = self.eddiHistoryCallBack1)
 
 
     def processUsageDataToTimeRange(self, rawUsageData):
@@ -499,10 +501,19 @@ class PowerControl(hass.Hass):
         return timeRangeUsageData
 
 
-    def eddiHistoryCallBack(self, kwargs):
+    def eddiHistoryCallBack1(self, kwargs):
+        self.eddiSolarData = kwargs
+        self.get_history(entity_id  = self.eddiGridPowerUsedTodayEntityName,
+                         start_time = self.usageFetchFromTime,
+                         callback   = self.eddiHistoryCallBack2)
+
+
+    def eddiHistoryCallBack2(self, kwargs):
         # Convert the raw data from HA into time series delta data
-        timeRangeEddiUsageData = self.processUsageDataToTimeRange(kwargs)
-        timeRangeUsageData     = self.processUsageDataToTimeRange(self.usagePowerData)
+        timeRangeEddiGridUsageData  = self.processUsageDataToTimeRange(kwargs)
+        timeRangeEddiSolarUsageData = self.processUsageDataToTimeRange(self.eddiSolarData)
+        timeRangeEddiUsageData      = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
+        timeRangeUsageData          = self.processUsageDataToTimeRange(self.usagePowerData)
 
         # Now go through the data creating an average usage for each time period based on the last x days history
         forecastUsage          = []

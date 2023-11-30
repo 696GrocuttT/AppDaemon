@@ -512,7 +512,7 @@ class PowerControl(hass.Hass):
         # Convert the raw data from HA into time series delta data
         timeRangeEddiGridUsageData  = self.processUsageDataToTimeRange(kwargs)
         timeRangeEddiSolarUsageData = self.processUsageDataToTimeRange(self.eddiSolarData)
-        timeRangeEddiUsageData      = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
+        self.core.eddiData          = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
         timeRangeUsageData          = self.processUsageDataToTimeRange(self.usagePowerData)
 
         # Now go through the data creating an average usage for each time period based on the last x days history
@@ -531,7 +531,7 @@ class PowerControl(hass.Hass):
                 usageForPeriod = self.core.powerForPeriod(timeRangeUsageData, 
                                                           forecastUsageStartTime - daysDelta, 
                                                           forecastUsageEndTime   - daysDelta)
-                eddiForPeriod  = self.core.powerForPeriod(timeRangeEddiUsageData, 
+                eddiForPeriod  = self.core.powerForPeriod(self.core.eddiData, 
                                                           forecastUsageStartTime - daysDelta, 
                                                           forecastUsageEndTime   - daysDelta)
                 avgUsage       = avgUsage + (usageForPeriod - eddiForPeriod)

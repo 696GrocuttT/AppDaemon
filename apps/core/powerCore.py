@@ -346,13 +346,21 @@ class PowerControlCore():
         self.originalImportRateData = list(importRateData)
         # Apply any tariff overrides
         if self.tariffOverrideType == "Export":
+            overridden = False
             for (index, rate) in enumerate(exportRateData):
                 if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
+                    overridden = True
                     exportRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
+            if overridden:
+                self.printSeries(exportRateData, "Overridden export rate")
         elif self.tariffOverrideType == "Import":
+            overridden = False
             for (index, rate) in enumerate(importRateData):
                 if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
+                    overridden = True
                     importRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
+            if overridden:
+                self.printSeries(importRateData, "Overridden import rate")
 
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 
@@ -918,7 +926,7 @@ class PowerControlCore():
         # Limit the length of time into the future that we calculate the discharge slots
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         endTime  = midnight + timedelta(hours=24)
-        if now.hour > 21:
+        if now.hour > 20:
             endTime = endTime + timedelta(hours=24)
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 

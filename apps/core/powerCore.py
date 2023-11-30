@@ -345,6 +345,7 @@ class PowerControlCore():
         self.originalExportRateData = list(exportRateData)
         self.originalImportRateData = list(importRateData)
         # Apply any tariff overrides
+        extendExportPlanTo = now
         if self.tariffOverrideType == "Export":
             overridden = False
             for (index, rate) in enumerate(exportRateData):
@@ -352,6 +353,7 @@ class PowerControlCore():
                     overridden = True
                     exportRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
             if overridden:
+                extendExportPlanTo = self.tariffOverrideEnd
                 self.printSeries(exportRateData, "Overridden export rate")
         elif self.tariffOverrideType == "Import":
             overridden = False
@@ -387,7 +389,7 @@ class PowerControlCore():
         importRateData = list(filter(lambda x: self.powerForPeriod(solarSurplus, x[0], x[1]) <= 0, importRateData))
         
         # calculate the charge plan, and work out what's left afterwards
-        batPlans                 = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now)
+        batPlans                 = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now, extendExportPlanTo)
         self.printSeries(batPlans.exportProfile(), "Export profile - pre eddi")
         postBatteryChargeSurplus = self.opOnSeries(solarSurplus, batPlans.solarChargingPlan, lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
@@ -856,7 +858,7 @@ class PowerControlCore():
         return maxRate
 
     
-    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now):
+    def calculateChargePlan(self, exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now, extendExportPlanTo):
         minImportChargeRate = min(map(lambda x: x[2], self.originalImportRateData)) / self.batEfficiency
         maxImportRate       = max(map(lambda x: x[2], self.originalImportRateData))
         # calculate the initial charging profile
@@ -878,7 +880,7 @@ class PowerControlCore():
                 newState.dischargeToGridPlan.append((slot[0], slot[1], dischargeForSlot))
             return newState   
             
-        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeGridExportSlotTest)
+        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeGridExportSlotTest, extendExportPlanTo)
 
         # Now we have a change plan, see if we can swap some of the slots to discharge to cover the house usage to
         # improve the income
@@ -890,7 +892,7 @@ class PowerControlCore():
                 newState.dischargeExportSolarPlan.append((slot[0], slot[1], solarUsageForSlot))
             return newState   
             
-        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeExportSolarSlotTest)
+        self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeExportSolarSlotTest, extendExportPlanTo)
    
         self.printSeries(batAllocateState.batProfile, "Battery profile - pre topup")
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
@@ -922,12 +924,15 @@ class PowerControlCore():
         return batAllocateState
 
 
-    def addDischargeSlots(self, batAllocateState, now, maxImportRate, slotTest):
+    def addDischargeSlots(self, batAllocateState, now, maxImportRate, slotTest, extendExportPlanTo):
         # Limit the length of time into the future that we calculate the discharge slots
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         endTime  = midnight + timedelta(hours=24)
         if now.hour > 20:
             endTime = endTime + timedelta(hours=24)
+        # Make sure we plan upto at least the end of the export override end time
+        if endTime < extendExportPlanTo:
+            endTime = extendExportPlanTo
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
         # availableChargeRates list directly, as we need to remove entries as we go, and we still need 

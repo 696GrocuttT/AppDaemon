@@ -26,6 +26,7 @@ class BatteryAllocateState():
         self.dischargeToGridPlan      = []
         self.eddiSolarPlan            = []
         self.eddiGridPlan             = []
+        self.gridSummary              = {}
         self.maxChargeCost            = core.maxChargeCost
         self.solarSurplus             = solarSurplus
         self.usageAfterSolar          = usageAfterSolar
@@ -415,7 +416,7 @@ class PowerControlCore():
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
-        self.calculateEddiPlan(exportRateData, importRateData, postBatteryChargeSurplus, batPlans)
+        self.calculateEddiPlan(exportRateData, importRateData, postBatteryChargeSurplus, batPlans, now)
         exportProfile  = batPlans.exportProfile()
         importProfile  = batPlans.importProfile()
         profileReducer = lambda a, b: (None, None, a[2]+b[2], a[3]+b[3], None)
@@ -424,14 +425,24 @@ class PowerControlCore():
         importSummary  = functools.reduce(profileReducer, importProfile, initialVal)
         netSummary     = (None, None, importSummary[2]-exportSummary[2], importSummary[3]-exportSummary[3], None)
         def summaryFormatter(typeStr, data):
-            rate = 100*data[3]/data[2] if data[2] != 0 else 0
-            return "{3} summary: {0:.2f} kWh @ £{1:.2f} = {2:.2f}p/kWh".format(data[2], data[3], rate, typeStr)
+            rate        = 100*data[3]/data[2] if data[2] != 0 else 0
+            summaryStr  = "{3} summary: {0:.2f} kWh @ £{1:.2f} = {2:.2f}p/kWh".format(data[2], data[3], rate, typeStr)
+            summaryDict = { "energy": data[2], 
+                            "cost":   data[3], 
+                            "rate":   rate } 
+            return (summaryStr, summaryDict)
         
+        (exportStr, exportDict) = summaryFormatter("Export", exportSummary)
+        (importStr, importDict) = summaryFormatter("Import", importSummary)
+        (netStr,    netDict)    = summaryFormatter("Net",    netSummary)
         self.printSeries(exportProfile, "Export profile - post eddi")
-        self.log(summaryFormatter("Export", exportSummary))
+        self.log(exportStr)
         self.printSeries(importProfile, "Import profile - post eddi")
-        self.log(summaryFormatter("Import", importSummary))
-        self.log(summaryFormatter("Net",    netSummary))
+        self.log(importStr)
+        self.log(netStr)
+        self.gridSummary = { "import": importDict,
+                             "export": exportDict,
+                             "net":    netDict}
         
         # Create a fake tariff with peak time covering the discharge plan
         # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 
@@ -468,18 +479,34 @@ class PowerControlCore():
         self.eddiSolarPlan            = batPlans.eddiSolarPlan
         self.eddiGridPlan             = batPlans.eddiGridPlan
         self.planUpdateTime           = now
-        
-
-    def eddiTargetRate(self):
-        return self.gasRate / self.gasEfficiency
 
 
-    def calculateEddiPlan(self, exportRateData, importRateData, solarSurplus, batPlans):
+    def calculateEddiPlan(self, exportRateData, importRateData, solarSurplus, batPlans, now):
         # Calculate the target rate for the eddi
         eddiSolarPlan     = []
         eddiGridPlan      = []
-        eddiTargetRate    = self.eddiTargetRate()
+        eddiTargetRate    = self.gasRate / self.gasEfficiency
         eddiPowerRequired = self.eddiTargetPower - self.eddiPowerUsedToday
+        
+        # Calculate the start time for the eddi plan. This has to be in the past so we calculate 
+        # how much energy we've already sent to the eddi
+        eddiDayStart = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        if eddiDayStart >= now:
+            eddiDayStart = eddiDayStart - timedelta(days=1)
+        eddiEnergyForSlot = self.powerForPeriod(self.eddiData, eddiDayStart, now)
+        # Now create a plan
+        slotStartTime       = eddiDayStart
+        slotEndTime         = eddiDayStart + timedelta(days=1)
+        planEndTime         = exportRateData[-1][1]
+        eddiPowerReqForSlot = []
+        while slotStartTime < planEndTime:
+            eddiPowerReqForSlot.append((slotStartTime, slotEndTime, self.eddiTargetPower - eddiEnergyForSlot))
+            # Rotate the vars for the next slot, inc zeroing the energy as what the eddi has 
+            # done so far only applies to the first slot in the plan.
+            slotStartTime     = slotEndTime
+            slotEndTime       = slotEndTime + timedelta(days=1)
+            eddiEnergyForSlot = 0
+        
         # For any slots where we're planning to run off the grid we also have the opertunity to 
         # eddi off the grid without draining the battery. Calculate the available slots that 
         # could be used.
@@ -496,7 +523,14 @@ class PowerControlCore():
         for rate in ratesCheapFirst:
             if rate[2] > eddiTargetRate:
                 break
-            maxPower   = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
+            # find the eddi slot that we're trying to fill for the rate time period
+            foundSlot = list(filter(lambda slot: slot[1][0] <= rate[0] and rate[1] <= slot[1][1], enumerate(eddiPowerReqForSlot)))
+            if not foundSlot:
+                continue 
+            powerReqSlotIdx  = foundSlot[0][0]
+            powerReqSlotInfo = foundSlot[0][1]
+            # Calculate the amount of power available
+            maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
             # is this a solar or grid slot
             if rate[3]:
                 power      = self.powerForPeriod(solarSurplus, rate[0], rate[1])
@@ -509,9 +543,11 @@ class PowerControlCore():
                 # Since this is a grid slot we can pull as much power as we want
                 powerTaken = maxPower
                 eddiGridPlan.append((rate[0], rate[1], powerTaken))
-            eddiPowerRequired = eddiPowerRequired - powerTaken
+            eddiPowerRequired = powerReqSlotInfo[2] - powerTaken
             if eddiPowerRequired < 0:
-                break
+                eddiPowerReqForSlot.remove(powerReqSlotIdx)
+            else:
+                eddiPowerReqForSlot[powerReqSlotIdx] = (powerReqSlotInfo[0], powerReqSlotInfo[1], eddiPowerRequired)
         # Add on any slots where the battery is charging and the rate is below the threshold. 
         # This means we divert any surplus that wasn't forecast that the battery could change 
         # from. EG if the battery fills up early, or we exceed the battery charge rate.

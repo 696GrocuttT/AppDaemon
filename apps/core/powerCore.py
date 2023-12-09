@@ -169,7 +169,8 @@ class PowerControlCore():
         self.planUpdateTime           = None
 
 
-    def save(self):
+    def save(self, now):
+        self.planUpdateTime = now
         # Save the state in case we needed for future debug
         slotMidTime = self.planUpdateTime + timedelta(minutes=15)
         fileName    = "{0}/{1:02.0f}_{2:02.0f}.pickle".format(self.stateSavesPath, slotMidTime.hour, 
@@ -544,8 +545,8 @@ class PowerControlCore():
                 powerTaken = maxPower
                 eddiGridPlan.append((rate[0], rate[1], powerTaken))
             eddiPowerRequired = powerReqSlotInfo[2] - powerTaken
-            if eddiPowerRequired < 0:
-                eddiPowerReqForSlot.remove(powerReqSlotIdx)
+            if eddiPowerRequired <= 0:
+                del eddiPowerReqForSlot[powerReqSlotIdx]
             else:
                 eddiPowerReqForSlot[powerReqSlotIdx] = (powerReqSlotInfo[0], powerReqSlotInfo[1], eddiPowerRequired)
         # Add on any slots where the battery is charging and the rate is below the threshold. 

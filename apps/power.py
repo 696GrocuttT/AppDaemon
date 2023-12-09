@@ -150,8 +150,8 @@ class PowerControl(hass.Hass):
         self.core.maxChargeCost      = maxChargeCost
         self.core.eddiPowerUsedToday = ( self.core.toFloat(self.get_state(self.eddiSolarPowerUsedTodayEntityName), 0) +
                                          self.core.toFloat(self.get_state(self.eddiGridPowerUsedTodayEntityName),  0) )
+        self.core.save(now)
         self.core.mergeAndProcessData(now)
-        self.core.save()
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
         # slot that starts now. This avoids any issues with this event firing a little 
         # early / late.

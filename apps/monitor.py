@@ -89,7 +89,7 @@ class SystemMonitor(hass.Hass):
             # If there's an extra condition to evaluate, do that now
             condition = eval(entityDict["condition"]) if entityDict["condition"] else True
             if (valueMatch != entityDict["invertTrigger"]) and condition:
-                message           = entityDict["message"].replace("%name%", entityDict["name"])
+                message           = entityDict["message"].replace("%name%", entityDict["name"]).replace("%value%", str(entityDict["value"]))
                 priority          = entityDict["priority"]
                 messages[message] = priority
                 if priority > curAlertLevel:

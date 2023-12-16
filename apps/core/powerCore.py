@@ -32,7 +32,7 @@ class BatteryAllocateState():
         self.usageAfterSolar          = usageAfterSolar
         self.exportRateData           = exportRateData
         self.importRateData           = importRateData
-        self.availableChargeRates     = sorted(exportRateData, key=lambda x: x[2])
+        self.availableExportRates     = sorted(exportRateData, key=lambda x: x[2])
         self.availableImportRates     = sorted(importRateData, key=lambda x: (x[2], x[0]))
         # We create a set of effective "charge" rates associated with not discharging the battery. The 
         # idea is that if we choose not to discharge for a period that's the same as charging the battery 
@@ -73,7 +73,7 @@ class BatteryAllocateState():
         self.eddiSolarPlan                  = fromState.eddiSolarPlan
         self.eddiGridPlan                   = fromState.eddiGridPlan
         self.maxChargeCost                  = fromState.maxChargeCost
-        self.availableChargeRates           = fromState.availableChargeRates
+        self.availableExportRates           = fromState.availableExportRates
         self.availableImportRates           = fromState.availableImportRates
         self.availableHouseGridPoweredRates = fromState.availableHouseGridPoweredRates
         self.solarSurplus                   = fromState.solarSurplus
@@ -92,7 +92,7 @@ class BatteryAllocateState():
         newState.dischargeToGridPlan            = list(newState.dischargeToGridPlan)
         newState.eddiSolarPlan                  = list(newState.eddiSolarPlan)
         newState.eddiGridPlan                   = list(newState.eddiGridPlan)
-        newState.availableChargeRates           = list(newState.availableChargeRates)
+        newState.availableExportRates           = list(newState.availableExportRates)
         newState.availableImportRates           = list(newState.availableImportRates)
         newState.availableHouseGridPoweredRates = list(newState.availableHouseGridPoweredRates)
         newState.solarSurplus                   = list(newState.solarSurplus)
@@ -674,7 +674,7 @@ class PowerControlCore():
 
     def allocateChangingSlots(self, state, now, maxImportRate, topUpToChargeCost = None):
         # We create a local copy of the available rates as there some cases (if there's no solar
-        # surplus) where we don't want to remove an entry from the availableChargeRates array, 
+        # surplus) where we don't want to remove an entry from the availableExportRates array, 
         # but we need to remove it locally so we can keep track of which items we've used, and 
         # which are still available
         availableImportRatesLocal           = list(state.availableImportRates)
@@ -690,10 +690,10 @@ class PowerControlCore():
         # Compute a list of times where's a rate, and we have a +ve solar surplus for the selected
         # percentile. First filter out the slots we don't have a rate for. Then filter out any zero 
         # surplus slots
-        nonZeroSolarSurplus                 = self.opOnSeries(state.availableChargeRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
+        nonZeroSolarSurplus                 = self.opOnSeries(state.availableExportRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
         nonZeroSolarSurplus                 = list(filter(lambda x: x[2], nonZeroSolarSurplus))
         # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
-        availableChargeRatesLocal           = self.opOnSeries(nonZeroSolarSurplus,       state.availableChargeRates, lambda a, b: b)        
+        availableExportRatesLocal           = self.opOnSeries(nonZeroSolarSurplus,       state.availableExportRates, lambda a, b: b)        
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         (fullEndTimeThresh,   fullyCharged, 
          lastFullSlotEndTime, empty, 
@@ -728,7 +728,7 @@ class PowerControlCore():
                 if not chargeRequired(empty, topUpToChargeCost, True):
                     chargeBefore = fullEndTimeThresh
             # Search for a charging slot
-            (chargeRate, rateId) = self.chooseRate3(availableChargeRatesLocal, availableImportRatesLocal, availableHouseGridPoweredRatesLocal, chargeBefore)                
+            (chargeRate, rateId) = self.chooseRate3(availableExportRatesLocal, availableImportRatesLocal, availableHouseGridPoweredRatesLocal, chargeBefore)                
             if chargeRate:
                 timeInSlot = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 # The charge cost is the cost to get x amount of energy in the battery, due to the overheads
@@ -763,8 +763,8 @@ class PowerControlCore():
                     # Calculate the minimum change cost available taking into account the fact that some list 
                     # of rates may be empty
                     minAvailableRate = math.inf
-                    if availableChargeRatesLocal:
-                        minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableChargeRatesLocal)))
+                    if availableExportRatesLocal:
+                        minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableExportRatesLocal)))
                     if availableImportRatesLocal:
                         minAvailableRate = min(minAvailableRate, min(map(lambda x: x[2], availableImportRatesLocal)))
                     if availableHouseGridPoweredRatesLocal:
@@ -794,12 +794,12 @@ class PowerControlCore():
                                                                                       min(powerLow,  maxCharge),
                                                                                       min(powerHigh, maxCharge)))
                         # we can only use a charging slot once, so remove it from the available list            
-                        state.availableChargeRates.remove(chargeRate)
+                        state.availableExportRates.remove(chargeRate)
                     # We always remove the rate from the local array, otherwise we could end up trying 
                     # to add the same zero power rate again and again. We don't want to remove these rates
-                    # from the availableChargeRates as we want these slots to be available outside this 
+                    # from the availableExportRates as we want these slots to be available outside this 
                     # function for other types of activity
-                    availableChargeRatesLocal.remove(chargeRate)
+                    availableExportRatesLocal.remove(chargeRate)
                 elif rateId == 1: # grid charge
                     willCharge = willCharge and gridUsageAllowed()
                     # We don't want to end up charging the battery when its cheaper to just run the house 
@@ -972,11 +972,11 @@ class PowerControlCore():
             endTime = extendExportPlanTo
         # look at the most expensive rate and see if there's solar usage we can flip to battery usage so
         # we can export more. We only do this if we still end up fully charged. We can't use the 
-        # availableChargeRates list directly, as we need to remove entries as we go, and we still need 
+        # availableExportRates list directly, as we need to remove entries as we go, and we still need 
         # to have a list of available charge slots after this step. We sort the list to favour the most 
         # profitable slots, then the earliest day, then the latest slot on that day (which is likely to 
         # be when there's the least solar, so we consider the largest power slots first).
-        potentialDischargeRates = sorted(filter(lambda x: x[0] < endTime, batAllocateState.availableChargeRates), 
+        potentialDischargeRates = sorted(filter(lambda x: x[0] < endTime, batAllocateState.availableExportRates), 
                                          key=lambda x: ( x[2], 
                                                          -x[0].replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), 
                                                          x[0].replace(year=2000, month=1, day=1).timestamp() ))
@@ -997,7 +997,7 @@ class PowerControlCore():
             assert(newBatAllocateState != batAllocateState)
             if newBatAllocateState:
                 # We can't change in the slot we're trying to discharge in, so remove this from the trial list.
-                newBatAllocateState.availableChargeRates.remove(mostExpenciveRate)
+                newBatAllocateState.availableExportRates.remove(mostExpenciveRate)
                 # We can't charge and discharge at the same time, so remove the proposed discharge slot from 
                 # the available charge rates. We also do the same for the existing import slots. It can make
                 # sense to swap one import slot for export because the import and export prices are so different.
@@ -1020,4 +1020,4 @@ class PowerControlCore():
                     batAllocateState.setTo(newBatAllocateState)
                     # We can't discharge for a slot if its already been used as a charge slot. So filter out 
                     # any potential discharge slots if they're not still in the available charge list.
-                    potentialDischargeRates = list(filter(lambda x: x in batAllocateState.availableChargeRates, potentialDischargeRates))
+                    potentialDischargeRates = list(filter(lambda x: x in batAllocateState.availableExportRates, potentialDischargeRates))

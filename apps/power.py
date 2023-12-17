@@ -120,6 +120,9 @@ class PowerControl(hass.Hass):
         startTime = now.replace(minute=0, second=0, microsecond=0) + self.batOutputTimeOffset
         while startTime < now:
             startTime = startTime + period
+        # Schedule an update of the eddi usage info just before the update of the main outputs. This way we won't delay 
+        # the main computation if the eddi update takes time    
+        self.run_every(self.fastEddiHistoryCallBack1, startTime - timedelta(minutes=1), 30*60)
         self.run_every(self.updateOutputs, startTime, 30*60)
         
 
@@ -145,11 +148,9 @@ class PowerControl(hass.Hass):
     def updateOutputs(self, kwargs):
         self.log("Updating outputs")
         # Adjust for the time offset that was applied when this function was scheduled.
-        now                          = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo) - self.batOutputTimeOffset
-        maxChargeCost                = float(self.get_state(self.prevMaxChargeCostEntity))
-        self.core.maxChargeCost      = maxChargeCost
-        self.core.eddiPowerUsedToday = ( self.core.toFloat(self.get_state(self.eddiSolarPowerUsedTodayEntityName), 0) +
-                                         self.core.toFloat(self.get_state(self.eddiGridPowerUsedTodayEntityName),  0) )
+        now                     = datetime.now(datetime.now(timezone.utc).astimezone().tzinfo) - self.batOutputTimeOffset
+        maxChargeCost           = float(self.get_state(self.prevMaxChargeCostEntity))
+        self.core.maxChargeCost = maxChargeCost
         self.core.save(now)
         self.core.mergeAndProcessData(now)
         # The time 15 minutes in the future (ie the middle of a time slot) to find a 
@@ -464,7 +465,7 @@ class PowerControl(hass.Hass):
         self.usagePowerData = kwargs
         self.get_history(entity_id  = self.eddiSolarPowerUsedTodayEntityName,
                          start_time = self.usageFetchFromTime,
-                         callback   = self.eddiHistoryCallBack1)
+                         callback   = self.usageEddiHistoryCallBack1)
 
 
     def processUsageDataToTimeRange(self, rawUsageData):
@@ -501,19 +502,36 @@ class PowerControl(hass.Hass):
         return timeRangeUsageData
 
 
-    def eddiHistoryCallBack1(self, kwargs):
+    def processEddiData(self):
+        self.log("Eddi data updated")
+        timeRangeEddiGridUsageData  = self.processUsageDataToTimeRange(self.eddiGridData)
+        timeRangeEddiSolarUsageData = self.processUsageDataToTimeRange(self.eddiSolarData)
+        self.core.eddiData          = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
+
+
+    def fastEddiHistoryCallBack1(self, kwargs):
         self.eddiSolarData = kwargs
         self.get_history(entity_id  = self.eddiGridPowerUsedTodayEntityName,
                          start_time = self.usageFetchFromTime,
-                         callback   = self.eddiHistoryCallBack2)
+                         callback   = self.fastEddiHistoryCallBack2)
 
 
-    def eddiHistoryCallBack2(self, kwargs):
-        # Convert the raw data from HA into time series delta data
-        timeRangeEddiGridUsageData  = self.processUsageDataToTimeRange(kwargs)
-        timeRangeEddiSolarUsageData = self.processUsageDataToTimeRange(self.eddiSolarData)
-        self.core.eddiData          = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
-        timeRangeUsageData          = self.processUsageDataToTimeRange(self.usagePowerData)
+    def fastEddiHistoryCallBack2(self, kwargs):
+        self.eddiGridData = kwargs
+        self.processEddiData()
+        
+
+    def usageEddiHistoryCallBack1(self, kwargs):
+        self.eddiSolarData = kwargs
+        self.get_history(entity_id  = self.eddiGridPowerUsedTodayEntityName,
+                         start_time = self.usageFetchFromTime,
+                         callback   = self.usageEddiHistoryCallBack2)
+
+
+    def usageEddiHistoryCallBack2(self, kwargs):
+        self.eddiGridData = kwargs
+        self.processEddiData()
+        timeRangeUsageData = self.processUsageDataToTimeRange(self.usagePowerData)
 
         # Now go through the data creating an average usage for each time period based on the last x days history
         forecastUsage          = []

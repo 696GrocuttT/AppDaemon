@@ -470,10 +470,9 @@ class PowerControlCore():
 
     def calculateEddiPlan(self, exportRateData, importRateData, solarSurplus, batPlans, now):
         # Calculate the target rate for the eddi
-        eddiSolarPlan     = []
-        eddiGridPlan      = []
-        eddiTargetRate    = self.gasRate / self.gasEfficiency
-        eddiPowerRequired = self.eddiTargetPower - self.eddiPowerUsedToday
+        eddiSolarPlan  = []
+        eddiGridPlan   = []
+        eddiTargetRate = self.gasRate / self.gasEfficiency
         
         # Calculate the start time for the eddi plan. This has to be in the past so we calculate 
         # how much energy we've already sent to the eddi
@@ -540,7 +539,8 @@ class PowerControlCore():
         # from. EG if the battery fills up early, or we exceed the battery charge rate.
         for chargePeriod in batPlans.solarChargingPlan:
             # If the entry is already in the eddi plan, don't try and add it again
-            if not any(x[0] == chargePeriod[0] for x in eddiSolarPlan):
+            if not (any(x[0] == chargePeriod[0] for x in eddiSolarPlan) or 
+                    any(x[0] == chargePeriod[0] for x in eddiGridPlan)):
                 exportRate = next(filter(lambda x: x[0] == chargePeriod[0], exportRateData))
                 if exportRate[2] <= eddiTargetRate:
                     eddiSolarPlan.append((chargePeriod[0], chargePeriod[1], 0))

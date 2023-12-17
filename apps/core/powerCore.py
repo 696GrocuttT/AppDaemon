@@ -583,7 +583,7 @@ class PowerControlCore():
                                 self.powerForPeriod(state.usageAfterSolar,          rate[0], rate[1], percentileIndex) -
                                 self.powerForPeriod(state.dischargeExportSolarPlan, rate[0], rate[1]) -
                                 self.powerForPeriod(state.dischargeToGridPlan,      rate[0], rate[1]) +
-                                self.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1]))
+                                self.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1], percentileIndex))
             totChargeEnergy  = totChargeEnergy + chargeEnergy
             fullyChanged     = batteryRemaining >= self.batteryCapacity
             empty            = batteryRemaining <= batTargetResEnergy
@@ -680,19 +680,6 @@ class PowerControlCore():
         nonZeroSolarSurplus                 = list(filter(lambda x: x[2], nonZeroSolarSurplus))
         # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
         availableExportRatesLocal           = self.opOnSeries(nonZeroSolarSurplus, state.availableExportRates, lambda a, b: b)        
-        # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
-        (fullEndTimeThresh,   fullyCharged, 
-         lastFullSlotEndTime, empty, 
-         totallyEmptyInAnySlot, 
-         lastEmptySlotEndTime)              = self.genBatLevelForecast(state, now, percentileIndex)
-        # initialise the allow empty before variable to the start of the profile so it has no effect to start with
-        allowEmptyBefore                    = state.batProfile[0][0]
-        maxAllowedChargeCost                = topUpToChargeCost if topUpToChargeCost else math.inf
-        # Define helper function to check if charging is required, this is so we can be sure to apply
-        # the same formula in multiple place
-        def chargeRequired(empty, topUpToChargeCost, fullyCharged):
-            return empty or topUpToChargeCost or not fullyCharged
-        
         # We don't want to discharge the battery for any slots where the cost of running the house off 
         # the grid is lower than what we've previously paid to charge the battery. So add any grid 
         # powered rates that are below the current charge cost
@@ -705,7 +692,20 @@ class PowerControlCore():
                 availableHouseGridPoweredRatesLocal.remove(rate)
                 state.availableHouseGridPoweredRates.remove(rate)
                 state.houseGridPoweredPlan.append((rate[0], rate[1], usage, usageLow, usageHigh))
-                                
+        addBelowChargeCostHouseGridPoweredSlots()
+        # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
+        (fullEndTimeThresh,   fullyCharged, 
+         lastFullSlotEndTime, empty, 
+         totallyEmptyInAnySlot, 
+         lastEmptySlotEndTime)              = self.genBatLevelForecast(state, now, percentileIndex)
+        # initialise the allow empty before variable to the start of the profile so it has no effect to start with
+        allowEmptyBefore                    = state.batProfile[0][0]
+        maxAllowedChargeCost                = topUpToChargeCost if topUpToChargeCost else math.inf
+        # Define helper function to check if charging is required, this is so we can be sure to apply
+        # the same formula in multiple place
+        def chargeRequired(empty, topUpToChargeCost, fullyCharged):
+            return empty or topUpToChargeCost or not fullyCharged
+                                        
         # Keep searching for a slot while there's a need for it, using the common healper function 
         # defined above 
         while chargeRequired(empty, topUpToChargeCost, fullyCharged):
@@ -734,10 +734,12 @@ class PowerControlCore():
                 # The charge cost is the cost to get x amount of energy in the battery, due to the overheads
                 # this is higher than the cost of the rate used to charge the battery.
                 chargeCost = chargeRate[2] / self.batEfficiency
-                # Pre calculate if the charge rase is below the max import rate. For this comparison we
+                # Pre calculate if the charge rate is below the max import rate. For this comparison we
                 # use the raw charge cost and don't take account of the battery efficency, is this gives
                 # us an apples to apples comparison with the import rates.
                 belowMaxImportRate = chargeRate[2] < maxImportRate
+                # Calculate the space left in the battery for this slot, We can't charge more than this
+                maxChargeEnergy = self.batteryCapacity - self.powerForPeriod(state.batProfile, chargeRate[0], chargeRate[1])
                 # Only allow charging if there's room in the battery for this slot, and its below the max
                 # charge cost allowed
                 willCharge = (chargeCost <= maxAllowedChargeCost) and not next(filter(lambda x: x[0] == chargeRate[0], state.batProfile))[3]
@@ -782,7 +784,7 @@ class PowerControlCore():
                     return belowMaxImportRate
                 
                 if rateId == 0: # solar
-                    maxCharge = timeInSlot * self.maxChargeRate
+                    maxCharge = min(timeInSlot * self.maxChargeRate, maxChargeEnergy)
                     powerMed  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1])
                     powerLow  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 1)
                     powerHigh = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 2)
@@ -833,7 +835,7 @@ class PowerControlCore():
                         slotUsed = True
                     # If the charge slot is still valid, add it to the plan now
                     solarCharge = self.powerForPeriod(state.solarChargingPlan, chargeRate[0], chargeRate[1])
-                    chargeTaken = (timeInSlot * self.batteryGridChargeRate) - solarCharge
+                    chargeTaken = min((timeInSlot * self.batteryGridChargeRate) - solarCharge, maxChargeEnergy)
                     if willCharge and chargeTaken > 0:
                         # we can only use a charging slot once, so remove it from the available list
                         state.availableImportRates.remove(chargeRate)
@@ -860,6 +862,7 @@ class PowerControlCore():
                     
                 if willCharge:
                     state.updateChangeCost(chargeCost)
+                    addBelowChargeCostHouseGridPoweredSlots()
                     # update the battery profile based on the new charging plan
                     (_, fullyCharged, lastFullSlotEndTime, empty, 
                      totallyEmptyInAnySlot, lastEmptySlotEndTime) = self.genBatLevelForecast(state, now, percentileIndex)   
@@ -873,8 +876,7 @@ class PowerControlCore():
                 availableImportRatesLocal = list(availableImportRatesLocalUnused)
             else:
                 break
-    
-        addBelowChargeCostHouseGridPoweredSlots()
+
         return (fullyCharged, empty)
 
     

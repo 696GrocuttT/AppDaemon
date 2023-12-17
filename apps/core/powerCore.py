@@ -39,14 +39,6 @@ class BatteryAllocateState():
         # with the same amount of power. It's actually better than this because not cycling the battery
         # means we reduce the battery wear, and don't have the battery efficency overhead. 
         self.availableHouseGridPoweredRates = list(self.availableImportRates)
-
-        # We don't want to discharge the battery for any slots where the cost of running the house off 
-        # the grid is lower than what we've previously paid to charge the battery. So add any grid 
-        # powered rates that are below the current charge cost
-        for rate in list(filter(lambda x: x[2] < core.maxChargeCost, self.availableHouseGridPoweredRates)):
-            self.availableHouseGridPoweredRates.remove(rate)
-            usage = core.powerForPeriod(self.usageAfterSolar, rate[0], rate[1])
-            self.houseGridPoweredPlan.append((rate[0], rate[1], usage))
  
 
     def updateChangeCost(self, cost):  
@@ -701,9 +693,23 @@ class PowerControlCore():
         def chargeRequired(empty, topUpToChargeCost, fullyCharged):
             return empty or topUpToChargeCost or not fullyCharged
         
+        # We don't want to discharge the battery for any slots where the cost of running the house off 
+        # the grid is lower than what we've previously paid to charge the battery. So add any grid 
+        # powered rates that are below the current charge cost
+        def addBelowChargeCostHouseGridPoweredSlots():
+            for rate in list(filter(lambda x: x[2] < state.maxChargeCost, availableHouseGridPoweredRatesLocal)):
+                usage     = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1])
+                usageLow  = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 1)
+                usageHigh = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 2)
+                # we can only use a charging slot once, so remove it from the available list
+                availableHouseGridPoweredRatesLocal.remove(rate)
+                state.availableHouseGridPoweredRates.remove(rate)
+                state.houseGridPoweredPlan.append((rate[0], rate[1], usage, usageLow, usageHigh))
+                                
         # Keep searching for a slot while there's a need for it, using the common healper function 
         # defined above 
         while chargeRequired(empty, topUpToChargeCost, fullyCharged):
+            addBelowChargeCostHouseGridPoweredSlots()
             # If the battery has gone flat during at any point, make sure the charging slot we search
             # for is before the point it went flat
             chargeBefore   = None
@@ -867,6 +873,8 @@ class PowerControlCore():
                 availableImportRatesLocal = list(availableImportRatesLocalUnused)
             else:
                 break
+    
+        addBelowChargeCostHouseGridPoweredSlots()
         return (fullyCharged, empty)
 
     

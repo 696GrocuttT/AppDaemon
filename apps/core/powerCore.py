@@ -383,12 +383,6 @@ class PowerControlCore():
         usageAfterSolar = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b)),
                                              self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 1),
                                              self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 2))
-
-        # We can't import and export at the same time, so remove and import rates slots for times when
-        # there's a solar surplus. In reality it isn't quite this simple, eg if there's 1KW of surplus 
-        # we could charge at 3kw by pulling some from the grid. But for the moment this hybrid style 
-        # charging isn't worth the extra complexity it would involve
-        importRateData = list(filter(lambda x: self.powerForPeriod(solarSurplus, x[0], x[1]) <= 0, importRateData))
         
         # calculate the charge plan, and work out what's left afterwards
         batPlans                 = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now, extendExportPlanTo)
@@ -693,7 +687,7 @@ class PowerControlCore():
         nonZeroSolarSurplus                 = self.opOnSeries(state.availableExportRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
         nonZeroSolarSurplus                 = list(filter(lambda x: x[2], nonZeroSolarSurplus))
         # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
-        availableExportRatesLocal           = self.opOnSeries(nonZeroSolarSurplus,       state.availableExportRates, lambda a, b: b)        
+        availableExportRatesLocal           = self.opOnSeries(nonZeroSolarSurplus, state.availableExportRates, lambda a, b: b)        
         # Keep producing a battery forecast and adding the cheapest charging slots until the battery is full
         (fullEndTimeThresh,   fullyCharged, 
          lastFullSlotEndTime, empty, 
@@ -832,8 +826,9 @@ class PowerControlCore():
                     else:
                         slotUsed = True
                     # If the charge slot is still valid, add it to the plan now
-                    if willCharge:
-                        chargeTaken = timeInSlot * self.batteryGridChargeRate
+                    solarCharge = self.powerForPeriod(state.solarChargingPlan, chargeRate[0], chargeRate[1])
+                    chargeTaken = (timeInSlot * self.batteryGridChargeRate) - solarCharge
+                    if willCharge and chargeTaken > 0:
                         # we can only use a charging slot once, so remove it from the available list
                         state.availableImportRates.remove(chargeRate)
                         state.gridChargingPlan.append((chargeRate[0], chargeRate[1], chargeTaken))
@@ -980,6 +975,15 @@ class PowerControlCore():
                                          key=lambda x: ( x[2], 
                                                          -x[0].replace(hour=0, minute=0, second=0, microsecond=0).timestamp(), 
                                                          x[0].replace(year=2000, month=1, day=1).timestamp() ))
+        # We also need to filter out any slots that we're importing / charging from potential discharge 
+        # opertinuties
+        def filterOutChangeSlotsFromPotentialDischargeSlots(potentialDischargeRates, batState):
+            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.solarChargingPlan,    lambda a, b: 0 if b else a)
+            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.houseGridPoweredPlan, lambda a, b: 0 if b else a)
+            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.gridChargingPlan,     lambda a, b: 0 if b else a)
+            return potentialDischargeRates
+        potentialDischargeRates = filterOutChangeSlotsFromPotentialDischargeSlots(potentialDischargeRates, batAllocateState)
+        
         while potentialDischargeRates:
             mostExpenciveRate = potentialDischargeRates[-1]
             del potentialDischargeRates[-1]
@@ -1018,6 +1022,5 @@ class PowerControlCore():
                 reqMargin    = self.minBuySelMargin if fullyCharged else self.minBuySelNotFullMargin
                 if  buySelMargin > reqMargin:
                     batAllocateState.setTo(newBatAllocateState)
-                    # We can't discharge for a slot if its already been used as a charge slot. So filter out 
-                    # any potential discharge slots if they're not still in the available charge list.
-                    potentialDischargeRates = list(filter(lambda x: x in batAllocateState.availableExportRates, potentialDischargeRates))
+                    # Refilter the potential slots to take account of the new charging slots that have been allocated
+                    potentialDischargeRates = filterOutChangeSlotsFromPotentialDischargeSlots(potentialDischargeRates, batAllocateState)

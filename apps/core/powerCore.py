@@ -937,20 +937,15 @@ class PowerControlCore():
    
         self.printSeries(batAllocateState.batProfile, "Battery profile - pre topup")
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
-        # the minimum of the lowest import cost or the max solar charge cost. This means we won't end up
-        # increasing the overall charge cost per/kwh. In addition, this means that we'll top up to 100%
-        # overright if that's the cheaper option, or if the solar export is a lower cost we'll end up topping
-        # up to 100% during the day. This in turn means we're more likely to be prepared for the next day. EG
-        # if we need a higher charge level at the end of the day if we need to make it all the way to the
-        # next days solar charge period, or a lower charge level at the end of the day because we only need
-        # to make it to the overright charge period max charge cost we've already established. One usecase
-        # for this adding additional night time grid charge slots
-        potentialSolarChargeSlots = list(filter(lambda x: x[2], batAllocateState.solarSurplus))
-        solarChargeExportRates    = self.opOnSeries(potentialSolarChargeSlots, exportRateData, lambda a, b: b)
-        maxSolarChargeCost        = max(map(lambda x: x[2] / self.batEfficiency, solarChargeExportRates), default=0)
-        topUpMaxCost              = min(maxSolarChargeCost, max(minImportChargeRate, 0))
-        topUpMaxCost              = topUpMaxCost * float(self.args.get('topUpCostTolerance', 1))
-        self.allocateChangingSlots(batAllocateState, now, maxImportRate, topUpMaxCost)    
+        # the max charge cost. This means we won't end up increasing the overall charge cost per/kwh. In
+        # addition, this means that we'll top up to 100% overright if that's the cheaper option, or if the 
+        # solar is a lower cost we'll end up topping up to 100% during the day. This in turn means we're 
+        # more likely to be prepared for the next day. EG if we need a higher charge level at the end of
+        # the day if we need to make it all the way to the next days solar charge period, or a lower charge 
+        # level at the end of the day because we only need to make it to the overright charge period max 
+        # charge cost we've already established. 
+        topUpMaxCost = batAllocateState.maxChargeCost * float(self.args.get('topUpCostTolerance', 1))
+        self.allocateChangingSlots(batAllocateState, now, maxImportRate, batAllocateState.maxChargeCost)    
 
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Max battery charge cost {0:.2f}".format(batAllocateState.maxChargeCost))

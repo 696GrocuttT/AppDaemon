@@ -732,8 +732,10 @@ class PowerControlCore():
             if chargeRate:
                 timeInSlot = (chargeRate[1] - chargeRate[0]).total_seconds() / (60 * 60)
                 # The charge cost is the cost to get x amount of energy in the battery, due to the overheads
-                # this is higher than the cost of the rate used to charge the battery.
-                chargeCost = chargeRate[2] / self.batEfficiency
+                # this is higher than the cost of the rate used to charge the battery. We don't apply the 
+                # efficency factor when using rate type 2, as this is powering the house directly off the
+                # grid, so the "chargeCost" is just the rate, and doesn't take into account the battery efficency.
+                chargeCost = chargeRate[2] if rateId == 2 else (chargeRate[2] / self.batEfficiency)
                 # Pre calculate if the charge rate is below the max import rate. For this comparison we
                 # use the raw charge cost and don't take account of the battery efficency, is this gives
                 # us an apples to apples comparison with the import rates.
@@ -846,9 +848,6 @@ class PowerControlCore():
                     if slotUsed:
                         availableImportRatesLocalUnused.remove(chargeRate)
                 elif rateId == 2: # house on grid power
-                    # Because we're not actually charging the battery, the "chargeCost" is just the rate, and
-                    # doesn't take into account the battery efficency.
-                    chargeCost = chargeRate[2]
                     willCharge = willCharge and gridUsageAllowed()
                     if willCharge:
                         usage     = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1])
@@ -953,8 +952,6 @@ class PowerControlCore():
         topUpMaxCost              = topUpMaxCost * float(self.args.get('topUpCostTolerance', 1))
         self.allocateChangingSlots(batAllocateState, now, maxImportRate, topUpMaxCost)    
 
-        soc = self.convertToAppPercentage((self.batteryEnergy / self.batteryCapacity) * 100)
-        self.log("Current battery charge {0:.3f}".format(soc))
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Max battery charge cost {0:.2f}".format(batAllocateState.maxChargeCost))
         self.printSeries(batAllocateState.batProfile, "Battery profile - post topup")

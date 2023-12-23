@@ -354,6 +354,7 @@ class PowerControl(hass.Hass):
     def exportRatesChanged(self, entity, attribute, old, new, kwargs):
         if new:
             index                      = kwargs['kwargs']
+            self.log("Export rates changed: i:{0} l:{1}".format(index, len(new)))
             self.rawExportRates[index] = new
             newRates                   = self.parseRates(self.rawExportRates, "export")
             if newRates:
@@ -363,6 +364,7 @@ class PowerControl(hass.Hass):
     def importRatesChanged(self, entity, attribute, old, new, kwargs):
         if new:
             index                      = kwargs['kwargs']
+            self.log("Import rates changed: i:{0} l:{1}".format(index, len(new)))
             self.rawImportRates[index] = new
             newRates                   = self.parseRates(self.rawImportRates, "import")
             if newRates:
@@ -446,12 +448,12 @@ class PowerControl(hass.Hass):
         self.log("Updating " + type + " tariff rates")
         rateData = None
         if rawRateData:
-            # Flattend the rate data first so we have one array for all days
-            rawRateData = [x for xs in rawRateData for x in xs]                    
+            # Flattend the rate data first so we have one array for all days. We turn this into a dictionary to remove any duplicates
+            rawRateData = {x['start']:x for xs in rawRateData for x in xs}                    
             rateData    = list(map(lambda x: (datetime.fromisoformat(x['start']).astimezone(),
                                               datetime.fromisoformat(x['end']).astimezone(), 
                                               x['value_inc_vat']), 
-                                   rawRateData))
+                                   rawRateData.values()))
             override    = self.tariffOverrides[type]
             if override:
                 rateData = list(map(lambda x: (x[0], x[1], override.get(x[2], x[2])), 

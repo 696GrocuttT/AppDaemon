@@ -90,7 +90,7 @@ class PowerControl(hass.Hass):
         self.listen_state(self.importRatesChanged, importRateEntityCurDayName,  attribute='rates', kwargs=0) 
         self.listen_state(self.importRatesChanged, importRateEntityNextDayName, attribute='rates', kwargs=1) 
         self.core.importRateData    = self.parseRates(self.rawImportRates, "import") or []
-        # Setup getting batter stats        
+        # Setup getting battery stats        
         batteryCapacityEntityName = self.args['batteryCapacity']
         batteryEnergyEntityName   = self.args['batteryEnergy']
         self.core.batteryCapacity = float(self.get_state(batteryCapacityEntityName)) / 1000
@@ -101,6 +101,15 @@ class PowerControl(hass.Hass):
         gasRateEntityName = self.args['gasRateEntity']
         self.gasRateChanged(None, None, math.nan, self.get_state(gasRateEntityName), None)
         self.listen_state(self.gasRateChanged, gasRateEntityName) 
+        # get saving session info
+        savingSessionEntityName = self.args.get('savingSessionEntity', None)
+        sessionListNames        = ['joined', 'available']
+        self.core.savingSession = { k:[] for k in sessionListNames }
+        if savingSessionEntityName:
+            for listName in sessionListNames:
+                attributeName = listName + "_events"
+                self.savingSessionChanged(None, None, None, self.get_state(savingSessionEntityName, attribute=attributeName), {'kwargs': listName})
+                self.listen_state(self.savingSessionChanged, savingSessionEntityName, attribute=attributeName, kwargs=listName)
         # Gets tariff override details
         tariffOverrideStartEntityName = self.args['tariffOverrideStart']
         tariffOverrideEndEntityName   = self.args['tariffOverrideEnd']
@@ -304,6 +313,19 @@ class PowerControl(hass.Hass):
                 new = override.get(new, new)
             self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(float(old), new))
             self.core.gasRate = new
+
+
+    def savingSessionChanged(self, entity, attribute, old, new, kwargs):
+        listName = kwargs['kwargs']
+        rateData = []
+        if new:
+            rateData = list(map(lambda x: (datetime.fromisoformat(x['start']).astimezone(),
+                                           datetime.fromisoformat(x['end']).astimezone(), 
+                                           x['octopoints_per_kwh']/800), 
+                                new))
+            rateData.sort(key=lambda x: x[0])    
+        self.core.printSeries(rateData, "Saving session (" + listName + ")")
+        self.core.savingSession[listName] = rateData
 
 
     def tariffOverrideStartChanged(self, entity, attribute, old, new, kwargs):

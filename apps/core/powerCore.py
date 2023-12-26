@@ -338,25 +338,40 @@ class PowerControlCore():
         importRateData              = list(filter(lambda x: x[1] <= exportRateEndTime, importRateData))
         self.originalExportRateData = list(exportRateData)
         self.originalImportRateData = list(importRateData)
+        # apply saving sessions
+        importRatesOverridden = False
+        exportRatesOverridden = False
+        for (listName, sessions) in self.savingSession.items():
+            # We assume every session will be joined, so we use the overrides for both available and joined 
+            # sessions to give us as much warning as possible. However we ignore any sessions that haven't 
+            # been joined if they're about to start, as this could happen if we fail to join one.
+            if listName == "available":
+                sessions = list(filter(lambda x: now <= x[0] - timedelta(minutes=30) or x[1] <= now, sessions))
+            for (start, end, price) in sessions:
+                for (index, rate) in enumerate(exportRateData):
+                    if start <= rate[0] and rate[1] <= end:
+                        exportRatesOverridden = True
+                        extendExportPlanTo    = end
+                        exportRateData[index] = (rate[0], rate[1], price)
         # Apply any tariff overrides
         extendExportPlanTo = now
         if self.tariffOverrideType == "Export":
-            overridden = False
             for (index, rate) in enumerate(exportRateData):
                 if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
-                    overridden = True
+                    exportRatesOverridden = True
+                    extendExportPlanTo    = self.tariffOverrideEnd
                     exportRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
-            if overridden:
-                extendExportPlanTo = self.tariffOverrideEnd
-                self.printSeries(exportRateData, "Overridden export rate")
         elif self.tariffOverrideType == "Import":
             overridden = False
             for (index, rate) in enumerate(importRateData):
                 if self.tariffOverrideStart <= rate[0] and rate[1] <= self.tariffOverrideEnd:
-                    overridden = True
+                    importRatesOverridden = True
                     importRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
-            if overridden:
-                self.printSeries(importRateData, "Overridden import rate")
+        # Print out any overridden rates
+        if exportRatesOverridden:
+            self.printSeries(exportRateData, "Overridden export rate")
+        if importRatesOverridden:
+            self.printSeries(importRateData, "Overridden import rate")
 
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 

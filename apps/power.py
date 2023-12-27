@@ -219,7 +219,9 @@ class PowerControl(hass.Hass):
             prevMaxChargeCost = max(prevMaxChargeCost, curRrate[2])
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
-        self.set_state(self.batteryPlanSummaryEntityName, state=summary, attributes=self.core.gridSummary)
+        self.set_state(self.batteryPlanSummaryEntityName, state=summary, attributes={"summary":                  self.core.gridSummary,
+                                                                                     "importProfile":            self.core.importProfileISO,
+                                                                                     "exportProfile":            self.core.exportProfileISO})
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
                                                                                      "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),

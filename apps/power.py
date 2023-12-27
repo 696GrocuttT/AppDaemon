@@ -222,6 +222,7 @@ class PowerControl(hass.Hass):
         self.set_state(self.prevMaxChargeCostEntity, state=prevMaxChargeCost)
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary, attributes={"summary":                  self.core.gridSummary,
+                                                                                     "maxChargeCost":            self.core.maxChargeCost,
                                                                                      "importProfile":            self.core.importProfileISO,
                                                                                      "exportProfile":            self.core.exportProfileISO,
                                                                                      "importRates":              self.core.importRateDataISO,

@@ -363,9 +363,9 @@ class PowerControlCore():
         self.utils.printSeries(importProfile, "Import profile - post eddi")
         self.log(importStr)
         self.log(netStr)
-        self.gridSummary       = { "import": importDict,
-                                   "export": exportDict,
-                                   "net":    netDict}
+        self.gridSummary       = {"import": importDict,
+                                  "export": exportDict,
+                                  "net":    netDict}
         profileIsoConvert      = lambda a: {"start":  a[0].isoformat(), 
                                             "end":    a[1].isoformat(), 
                                             "energy": a[2], 
@@ -411,6 +411,7 @@ class PowerControlCore():
         self.dischargeExportSolarPlan = batPlans.dischargeExportSolarPlan
         self.dischargeToGridPlan      = batPlans.dischargeToGridPlan
         self.dischargeToHousePlan     = dischargeToHousePlan
+        self.maxChargeCost            = batPlans.maxChargeCost
         self.eddiSolarPlan            = batPlans.eddiSolarPlan
         self.eddiGridPlan             = batPlans.eddiGridPlan
         self.planUpdateTime           = now

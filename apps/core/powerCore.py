@@ -2,6 +2,7 @@ from datetime   import datetime
 from datetime   import timedelta
 from datetime   import timezone
 from statistics import mean
+from core.powerUtils import PowerUtils
 import re
 import math
 import numpy
@@ -17,7 +18,7 @@ import functools
 
 class BatteryAllocateState():
     def __init__(self, exportRateData, importRateData, solarSurplus, usageAfterSolar, core):
-        self.core                     = core
+        self.utils                    = core.utils
         self.batProfile               = []
         self.solarChargingPlan        = []
         self.gridChargingPlan         = []
@@ -97,28 +98,28 @@ class BatteryAllocateState():
     def exportProfile(self):
         # Remote charging power and surplus outside the period we have export rates for
         # (because we won't have a plan for those periods yet).
-        exportProfile = self.core.opOnSeries(self.solarSurplus, self.exportRateData,           lambda a, b: a if b else 0)
-        exportProfile = self.core.opOnSeries(exportProfile,     self.solarChargingPlan,        lambda a, b: a - b)
-        exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeExportSolarPlan, lambda a, b: a + b)
-        exportProfile = self.core.opOnSeries(exportProfile,     self.dischargeToGridPlan,      lambda a, b: a + b)
-        exportProfile = self.core.opOnSeries(exportProfile,     self.eddiSolarPlan,            lambda a, b: a - b)
-        exportCosts   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: a * b)
-        exportRates   = self.core.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: b)
-        exportProfile = self.core.combineSeries(exportProfile,  exportCosts,                   exportRates)
+        exportProfile = self.utils.opOnSeries(self.solarSurplus, self.exportRateData,           lambda a, b: a if b else 0)
+        exportProfile = self.utils.opOnSeries(exportProfile,     self.solarChargingPlan,        lambda a, b: a - b)
+        exportProfile = self.utils.opOnSeries(exportProfile,     self.dischargeExportSolarPlan, lambda a, b: a + b)
+        exportProfile = self.utils.opOnSeries(exportProfile,     self.dischargeToGridPlan,      lambda a, b: a + b)
+        exportProfile = self.utils.opOnSeries(exportProfile,     self.eddiSolarPlan,            lambda a, b: a - b)
+        exportCosts   = self.utils.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: a * b)
+        exportRates   = self.utils.opOnSeries(exportProfile,     self.exportRateData,           lambda a, b: b)
+        exportProfile = self.utils.combineSeries(exportProfile,   exportCosts,                   exportRates)
         return list(filter(lambda x: x[2], exportProfile))
 
 
     def importProfile(self):
-        usageWhenGridChanging = self.core.opOnSeries(self.gridChargingPlan, self.usageAfterSolar, lambda a, b: b)
+        usageWhenGridChanging = self.utils.opOnSeries(self.gridChargingPlan, self.usageAfterSolar, lambda a, b: b)
         # use the input rate to make sure all time slots are populated. Otherwise we only 
         # end up producing a series when there's a charge plan
-        importProfile = self.core.opOnSeries(self.importRateData, self.gridChargingPlan,     lambda a, b: b if a else 0)
-        importProfile = self.core.opOnSeries(importProfile,       self.houseGridPoweredPlan, lambda a, b: a + b)
-        importProfile = self.core.opOnSeries(importProfile,       usageWhenGridChanging,     lambda a, b: a + b)
-        importProfile = self.core.opOnSeries(importProfile,       self.eddiGridPlan,         lambda a, b: a + b)
-        importCosts   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: a * b)
-        importRates   = self.core.opOnSeries(importProfile,       self.importRateData,       lambda a, b: b)
-        importProfile = self.core.combineSeries(importProfile,    importCosts,               importRates)
+        importProfile = self.utils.opOnSeries(self.importRateData, self.gridChargingPlan,     lambda a, b: b if a else 0)
+        importProfile = self.utils.opOnSeries(importProfile,       self.houseGridPoweredPlan, lambda a, b: a + b)
+        importProfile = self.utils.opOnSeries(importProfile,       usageWhenGridChanging,     lambda a, b: a + b)
+        importProfile = self.utils.opOnSeries(importProfile,       self.eddiGridPlan,         lambda a, b: a + b)
+        importCosts   = self.utils.opOnSeries(importProfile,       self.importRateData,       lambda a, b: a * b)
+        importRates   = self.utils.opOnSeries(importProfile,       self.importRateData,       lambda a, b: b)
+        importProfile = self.utils.combineSeries(importProfile,     importCosts,               importRates)
         return list(filter(lambda x: x[2], importProfile))
 
 
@@ -127,6 +128,7 @@ class PowerControlCore():
     def __init__(self, args, log):
         self.log                      = log
         self.args                     = args
+        self.utils                    = PowerUtils(self.log)
         self.maxChargeRate            = float(args['batteryChargeRateLimit'])
         self.maxDischargeRate         = float(args['batteryDischargeRateLimit'])
         self.batteryGridChargeRate    = float(args['batteryGridChargeRate'])
@@ -169,14 +171,17 @@ class PowerControlCore():
                                                               30 * math.floor(float(slotMidTime.minute)/30))
         # We can't serialise the logger, so nul out the loger on self so we can serialise 
         # safely, then restore it afterwards
-        log      = self.log
-        self.log = None
+        log        = self.log
+        self.log   = None
+        utils      = self.utils
+        self.utils = None
         try:
             with open(fileName, 'wb') as handle:
                 pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
         except Exception as error:
             log("Error saving state: " + str(error))
-        self.log = log
+        self.log   = log
+        self.utils = utils
 
 
     def load(fileName, log):
@@ -187,6 +192,7 @@ class PowerControlCore():
                 obj.log = log
         except Exception as error:
             print("Error loading state: " + str(error))
+        obj.utils = PowerUtils(obj.log)
         return obj
 
 
@@ -197,84 +203,9 @@ class PowerControlCore():
             value = default
         return value
 
-        
-    def powerForPeriod(self, data, startTime, endTime, valueIdxOffset=0):
-        power = 0.0
-        for forecastPeriod in data:
-            forecastStartTime = forecastPeriod[0]
-            forecastEndTime   = forecastPeriod[1]
-            forecastPower     = forecastPeriod[2+valueIdxOffset]
-            # is it an exact match
-            if  startTime == forecastStartTime and endTime == forecastEndTime:
-                power = power + forecastPower 
-                # If its an exact match we should be done, so exit early
-                break
-            # is it a complete match
-            elif startTime <= forecastStartTime and endTime >= forecastEndTime:
-                power = power + forecastPower
-            # period all within forecost
-            elif startTime >= forecastStartTime and endTime <= forecastEndTime:
-                # scale the forecast power to the length of the period
-                power = power + ( forecastPower * ((endTime         - startTime) / 
-                                                   (forecastEndTime - forecastStartTime)) )
-            # partial match before
-            elif endTime >= forecastStartTime and endTime <= forecastEndTime:
-                power = power + ( forecastPower * ((endTime         - forecastStartTime) / 
-                                                   (forecastEndTime - forecastStartTime)) )
-            # partial match after
-            elif startTime >= forecastStartTime and startTime <= forecastEndTime:
-                power = power + ( forecastPower * ((forecastEndTime - startTime) / 
-                                                   (forecastEndTime - forecastStartTime)) )
-        return power
-  
-  
-    def mergeSeries(self, series):
-        mergedSeries = []
-        if series:
-            valueIdxList = list(range(2, len(series[0])))
-        for item in series:
-            # If we already have an item in the merged list, and the last item of that list 
-            # has an end time that matches the start time of the new item. Merge them.
-            if mergedSeries and mergedSeries[-1][1] == item[0]:
-                updatedElement = [mergedSeries[-1][0], item[1]]
-                for idx in valueIdxList:
-                    updatedElement.append(mergedSeries[-1][idx] + item[idx])
-                mergedSeries[-1] = tuple(updatedElement)
-            else:
-                mergedSeries.append(item)
-        return mergedSeries
-        
-
-    def seriesToString(self, series, newLineStr, mergeable=False):
-        if mergeable:
-            series = self.mergeSeries(series)
-        formatStr = "{0:%d %B %H:%M} -> {1:%H:%M} :"
-        # Look at the types of the first element of the series to build the rest of the format string
-        if series:
-            for valueIdx in range(2, len(series[0])):
-                # boolean values can be an instance of 'int', so we have to check for bools and exclude them
-                if (isinstance(series[0][valueIdx], float) or isinstance(series[0][valueIdx], int)) and not isinstance(series[0][valueIdx], bool):
-                    formatStr = formatStr + " {{{0}:.3f}}".format(valueIdx)
-                else:
-                    formatStr = formatStr + " {{{0}}}".format(valueIdx)            
-        strings = map(lambda x: formatStr.format(*x), series)
-        return newLineStr.join(strings)
-
-
-    def printSeries(self, series, title, mergeable=False):
-        self.log(title + ":\n" + self.seriesToString(series, "\n", mergeable))
-
-
-    def opOnSeries(self, a, b, operation, aValueIdxOffset=0, bValueIdxOffset=0):
-        return list(map(lambda aSample: ( aSample[0], 
-                                          aSample[1], 
-                                          operation(aSample[2+aValueIdxOffset], 
-                                                    self.powerForPeriod(b, aSample[0], aSample[1], bValueIdxOffset)) ),
-                        a))
-
 
     def seriesToTariff(self, series, midnight):
-        mergedPlan    = self.mergeSeries(series)
+        mergedPlan    = self.utils.mergeSeries(series)
         secondsInADay = 24 * 60 * 60
         tariff        = map(lambda x: [int((x[0] - midnight).total_seconds()),
                                        int((x[1] - midnight).total_seconds())], mergedPlan)
@@ -289,16 +220,6 @@ class PowerControlCore():
         return newTariff
 
 
-    def combineSeries(self, baseSeries, *args):
-        output = []
-        for idx, baseSample in enumerate(baseSeries):
-            outputElement = list(baseSample)
-            for extraSeries in args:
-                outputElement.append(extraSeries[idx][2])
-            output.append(tuple(outputElement))
-        return output
-
-
     def extendSeries(self, inputSeries, extendBy = timedelta(), extendTo = None):                                      
         outputSeries = list(inputSeries)
         if outputSeries:
@@ -311,9 +232,9 @@ class PowerControlCore():
                 # compute the details of the next slot
                 periodStartTime = periodEndTime 
                 periodEndTime   = periodEndTime + periodDuration
-                power           = self.powerForPeriod(outputSeries, 
-                                                      periodStartTime - timedelta(hours=24), 
-                                                      periodEndTime   - timedelta(hours=24)) 
+                power           = self.utils.powerForPeriod(outputSeries, 
+                                                            periodStartTime - timedelta(hours=24), 
+                                                            periodEndTime   - timedelta(hours=24)) 
                 outputSeries.append((periodStartTime, periodEndTime, power))
         return outputSeries
         
@@ -369,9 +290,9 @@ class PowerControlCore():
                     importRateData[index] = (rate[0], rate[1], self.tariffOverridePrice)
         # Print out any overridden rates
         if exportRatesOverridden:
-            self.printSeries(exportRateData, "Overridden export rate")
+            self.utils.printSeries(exportRateData, "Overridden export rate")
         if importRatesOverridden:
-            self.printSeries(importRateData, "Overridden import rate")
+            self.utils.printSeries(importRateData, "Overridden import rate")
 
         # Calculate the solar surplus after house load, we base this on the usage time 
         # series dates as that's typically a finer granularity than the solar forecast. Similarly 
@@ -381,40 +302,40 @@ class PowerControlCore():
         # plan the battery charge / house usage.
         usageData       = self.extendSeries(self.usageData, timedelta(), exportRateData[-1][1])
         usageData       = list(filter(lambda x: x[0] >= exportRateData[0][0] and x[1] <= exportRateData[-1][1], usageData))
-        solarSurplus    = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a)), 
-                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 1), 
-                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 2))
-        solarUsage      = self.combineSeries(self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a),
-                                             self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 1, 1),
-                                             self.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 2, 2))
-        usageAfterSolar = self.combineSeries(self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b)),
-                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 1),
-                                             self.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 2))
+        solarSurplus    = self.utils.combineSeries(self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a)), 
+                                                   self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 1), 
+                                                   self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, b-a), 0, 2))
+        solarUsage      = self.utils.combineSeries(self.utils.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a),
+                                                   self.utils.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 1, 1),
+                                                   self.utils.opOnSeries(solarSurplus, self.solarData, lambda a, b: b-a, 2, 2))
+        usageAfterSolar = self.utils.combineSeries(self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b)),
+                                                   self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 1),
+                                                   self.utils.opOnSeries(usageData,    self.solarData, lambda a, b: max(0, a-b), 0, 2))
         
         # calculate the charge plan, and work out what's left afterwards
         batPlans                 = self.calculateChargePlan(exportRateData, importRateData, solarUsage, solarSurplus, usageAfterSolar, now, extendExportPlanTo)
-        self.printSeries(batPlans.exportProfile(), "Export profile - pre eddi")
-        postBatteryChargeSurplus = self.opOnSeries(solarSurplus, batPlans.solarChargingPlan, lambda a, b: a-b)
+        self.utils.printSeries(batPlans.exportProfile(), "Export profile - pre eddi")
+        postBatteryChargeSurplus = self.utils.opOnSeries(solarSurplus, batPlans.solarChargingPlan, lambda a, b: a-b)
         # Calculate the times when we want the battery in standby mode. IE when there's solar surplus 
         # but we don't want to charge or discharge.
         standbyPlan = []
         for rate in exportRateData:
-            curSolarSurplus =  self.powerForPeriod(solarSurplus,                      rate[0], rate[1])
-            isPlanned       = (self.powerForPeriod(batPlans.solarChargingPlan,        rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(batPlans.gridChargingPlan,         rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(batPlans.houseGridPoweredPlan,     rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(batPlans.dischargeExportSolarPlan, rate[0], rate[1]) > 0 or
-                               self.powerForPeriod(batPlans.dischargeToGridPlan,      rate[0], rate[1]) > 0)
+            curSolarSurplus =  self.utils.powerForPeriod(solarSurplus,                      rate[0], rate[1])
+            isPlanned       = (self.utils.powerForPeriod(batPlans.solarChargingPlan,        rate[0], rate[1]) > 0 or
+                               self.utils.powerForPeriod(batPlans.gridChargingPlan,         rate[0], rate[1]) > 0 or
+                               self.utils.powerForPeriod(batPlans.houseGridPoweredPlan,     rate[0], rate[1]) > 0 or
+                               self.utils.powerForPeriod(batPlans.dischargeExportSolarPlan, rate[0], rate[1]) > 0 or
+                               self.utils.powerForPeriod(batPlans.dischargeToGridPlan,      rate[0], rate[1]) > 0)
             if (curSolarSurplus > 0) and not isPlanned: 
                 standbyPlan.append((rate[0], rate[1], curSolarSurplus))
         # Create a background plan for info only that shows when we're just powering the house from the battery.
-        usageForRateSlotsOnly = self.opOnSeries(exportRateData,        self.usageData,                    lambda a, b: b)
-        dischargeToHousePlan  = self.opOnSeries(usageForRateSlotsOnly, batPlans.solarChargingPlan,        lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.gridChargingPlan,         lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.houseGridPoweredPlan,     lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  standbyPlan,                       lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.dischargeExportSolarPlan, lambda a, b: 0 if b else a)
-        dischargeToHousePlan  = self.opOnSeries(dischargeToHousePlan,  batPlans.dischargeToGridPlan,      lambda a, b: 0 if b else a)
+        usageForRateSlotsOnly = self.utils.opOnSeries(exportRateData,        self.usageData,                    lambda a, b: b)
+        dischargeToHousePlan  = self.utils.opOnSeries(usageForRateSlotsOnly, batPlans.solarChargingPlan,        lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.utils.opOnSeries(dischargeToHousePlan,  batPlans.gridChargingPlan,         lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.utils.opOnSeries(dischargeToHousePlan,  batPlans.houseGridPoweredPlan,     lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.utils.opOnSeries(dischargeToHousePlan,  standbyPlan,                       lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.utils.opOnSeries(dischargeToHousePlan,  batPlans.dischargeExportSolarPlan, lambda a, b: 0 if b else a)
+        dischargeToHousePlan  = self.utils.opOnSeries(dischargeToHousePlan,  batPlans.dischargeToGridPlan,      lambda a, b: 0 if b else a)
         dischargeToHousePlan  = list(filter(lambda x: x[2], dischargeToHousePlan))
 
         # Calculate the eddi plan based on any remaining surplus
@@ -437,9 +358,9 @@ class PowerControlCore():
         (exportStr, exportDict) = summaryFormatter("Export", exportSummary)
         (importStr, importDict) = summaryFormatter("Import", importSummary)
         (netStr,    netDict)    = summaryFormatter("Net",    netSummary)
-        self.printSeries(exportProfile, "Export profile - post eddi")
+        self.utils.printSeries(exportProfile, "Export profile - post eddi")
         self.log(exportStr)
-        self.printSeries(importProfile, "Import profile - post eddi")
+        self.utils.printSeries(importProfile, "Import profile - post eddi")
         self.log(importStr)
         self.log(netStr)
         self.gridSummary       = { "import": importDict,
@@ -474,15 +395,15 @@ class PowerControlCore():
         peakPeriods   = self.seriesToTariff(peakPlan, midnight)
         self.defPrice = "0.10 0.10 OFF_PEAK"
         self.pwTariff = {"0.90 0.90 ON_PEAK": peakPeriods}
-        self.printSeries(batPlans.solarChargingPlan,        "Solar charging plan",         mergeable=True)
-        self.printSeries(batPlans.gridChargingPlan,         "Grid charging plan",          mergeable=True)
-        self.printSeries(batPlans.houseGridPoweredPlan,     "House grid powered plan",     mergeable=True)
-        self.printSeries(standbyPlan,                       "Standby plan",                mergeable=True)
-        self.printSeries(batPlans.dischargeExportSolarPlan, "Discharge export solar plan", mergeable=True)
-        self.printSeries(batPlans.dischargeToGridPlan,      "Discharge to grid plan",      mergeable=True)
-        self.printSeries(dischargeToHousePlan,              "Discharging to house plan",   mergeable=True)
-        self.printSeries(batPlans.eddiSolarPlan,            "Eddi solar plan",             mergeable=True)
-        self.printSeries(batPlans.eddiGridPlan,             "Eddi grid plan",              mergeable=True)
+        self.utils.printSeries(batPlans.solarChargingPlan,        "Solar charging plan",         mergeable=True)
+        self.utils.printSeries(batPlans.gridChargingPlan,         "Grid charging plan",          mergeable=True)
+        self.utils.printSeries(batPlans.houseGridPoweredPlan,     "House grid powered plan",     mergeable=True)
+        self.utils.printSeries(standbyPlan,                       "Standby plan",                mergeable=True)
+        self.utils.printSeries(batPlans.dischargeExportSolarPlan, "Discharge export solar plan", mergeable=True)
+        self.utils.printSeries(batPlans.dischargeToGridPlan,      "Discharge to grid plan",      mergeable=True)
+        self.utils.printSeries(dischargeToHousePlan,              "Discharging to house plan",   mergeable=True)
+        self.utils.printSeries(batPlans.eddiSolarPlan,            "Eddi solar plan",             mergeable=True)
+        self.utils.printSeries(batPlans.eddiGridPlan,             "Eddi grid plan",              mergeable=True)
         self.solarChargingPlan        = batPlans.solarChargingPlan
         self.gridChargingPlan         = batPlans.gridChargingPlan
         self.houseGridPoweredPlan     = batPlans.houseGridPoweredPlan
@@ -506,7 +427,7 @@ class PowerControlCore():
         eddiDayStart = now.replace(hour=9, minute=0, second=0, microsecond=0)
         if eddiDayStart >= now:
             eddiDayStart = eddiDayStart - timedelta(days=1)
-        eddiEnergyForSlot = self.powerForPeriod(self.eddiData, eddiDayStart, now)
+        eddiEnergyForSlot = self.utils.powerForPeriod(self.eddiData, eddiDayStart, now)
         # Now create a plan
         slotStartTime       = eddiDayStart
         slotEndTime         = eddiDayStart + timedelta(days=1)
@@ -523,12 +444,12 @@ class PowerControlCore():
         # For any slots where we're planning to run off the grid we also have the opertunity to 
         # eddi off the grid without draining the battery. Calculate the available slots that 
         # could be used.
-        gridUseRates      =                self.opOnSeries(batPlans.houseGridPoweredPlan, importRateData, lambda a, b: b)
-        gridUseRates      = gridUseRates + self.opOnSeries(batPlans.gridChargingPlan,     importRateData, lambda a, b: b)
+        gridUseRates      =                self.utils.opOnSeries(batPlans.houseGridPoweredPlan, importRateData, lambda a, b: b)
+        gridUseRates      = gridUseRates + self.utils.opOnSeries(batPlans.gridChargingPlan,     importRateData, lambda a, b: b)
         gridUseRates      = list(map(lambda a: (a[0], a[1], a[2], False), gridUseRates))
         # combine with the export rates for solar and sort based on price        
         solarSurplus      = list(filter(lambda x: x[2], solarSurplus))
-        solarSurplusRates = self.opOnSeries(solarSurplus, exportRateData, lambda a, b: b)
+        solarSurplusRates = self.utils.opOnSeries(solarSurplus, exportRateData, lambda a, b: b)
         solarSurplusRates = list(map(lambda a: (a[0], a[1], a[2], True), solarSurplusRates))
         ratesCheapFirst   = sorted(gridUseRates + solarSurplusRates, key=lambda x: x[2])
         # Create the eddi plan by looking for rates that are below the threshold where gas 
@@ -546,7 +467,7 @@ class PowerControlCore():
             maxPower = ((rate[1] - rate[0]).total_seconds() / (60 * 60)) * self.eddiPowerLimit
             # is this a solar or grid slot
             if rate[3]:
-                power      = self.powerForPeriod(solarSurplus, rate[0], rate[1])
+                power      = self.utils.powerForPeriod(solarSurplus, rate[0], rate[1])
                 powerTaken = max(min(power, maxPower), 0)
                 # We still plan to use the eddi even if the forcast says there won't be a 
                 # surplus. This is in case the forcast is wrong, or there are dips in usage 
@@ -604,13 +525,13 @@ class PowerControlCore():
         totChargeEnergy       = 0.0
         # The rate data is just used as a basis for the timeline
         for (index, rate) in enumerate(state.exportRateData):
-            chargeEnergy     = (self.powerForPeriod(state.solarChargingPlan,        rate[0], rate[1], percentileIndex) +
-                                self.powerForPeriod(state.gridChargingPlan,         rate[0], rate[1]))
+            chargeEnergy     = (self.utils.powerForPeriod(state.solarChargingPlan,        rate[0], rate[1], percentileIndex) +
+                                self.utils.powerForPeriod(state.gridChargingPlan,         rate[0], rate[1]))
             batteryRemaining = (batteryRemaining + chargeEnergy - 
-                                self.powerForPeriod(state.usageAfterSolar,          rate[0], rate[1], percentileIndex) -
-                                self.powerForPeriod(state.dischargeExportSolarPlan, rate[0], rate[1]) -
-                                self.powerForPeriod(state.dischargeToGridPlan,      rate[0], rate[1]) +
-                                self.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1], percentileIndex))
+                                self.utils.powerForPeriod(state.usageAfterSolar,          rate[0], rate[1], percentileIndex) -
+                                self.utils.powerForPeriod(state.dischargeExportSolarPlan, rate[0], rate[1]) -
+                                self.utils.powerForPeriod(state.dischargeToGridPlan,      rate[0], rate[1]) +
+                                self.utils.powerForPeriod(state.houseGridPoweredPlan,     rate[0], rate[1], percentileIndex))
             totChargeEnergy  = totChargeEnergy + chargeEnergy
             fullyChanged     = batteryRemaining >= self.batteryCapacity
             empty            = batteryRemaining <= batTargetResEnergy
@@ -703,18 +624,18 @@ class PowerControlCore():
         # Compute a list of times where's a rate, and we have a +ve solar surplus for the selected
         # percentile. First filter out the slots we don't have a rate for. Then filter out any zero 
         # surplus slots
-        nonZeroSolarSurplus                 = self.opOnSeries(state.availableExportRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
+        nonZeroSolarSurplus                 = self.utils.opOnSeries(state.availableExportRates, state.solarSurplus, lambda a, b: b, 0, percentileIndex)
         nonZeroSolarSurplus                 = list(filter(lambda x: x[2], nonZeroSolarSurplus))
         # Now create a local list of charge rates, but only for the slots where there's a non-zero surplus.        
-        availableExportRatesLocal           = self.opOnSeries(nonZeroSolarSurplus, state.availableExportRates, lambda a, b: b)        
+        availableExportRatesLocal           = self.utils.opOnSeries(nonZeroSolarSurplus, state.availableExportRates, lambda a, b: b)        
         # We don't want to discharge the battery for any slots where the cost of running the house off 
         # the grid is lower than what we've previously paid to charge the battery. So add any grid 
         # powered rates that are below the current charge cost
         def addBelowChargeCostHouseGridPoweredSlots():
             for rate in list(filter(lambda x: x[2] < state.maxChargeCost, availableHouseGridPoweredRatesLocal)):
-                usage     = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1])
-                usageLow  = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 1)
-                usageHigh = self.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 2)
+                usage     = self.utils.powerForPeriod(state.usageAfterSolar, rate[0], rate[1])
+                usageLow  = self.utils.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 1)
+                usageHigh = self.utils.powerForPeriod(state.usageAfterSolar, rate[0], rate[1], 2)
                 # we can only use a charging slot once, so remove it from the available list
                 availableHouseGridPoweredRatesLocal.remove(rate)
                 state.availableHouseGridPoweredRates.remove(rate)
@@ -768,7 +689,7 @@ class PowerControlCore():
                 # us an apples to apples comparison with the import rates.
                 belowMaxImportRate = chargeRate[2] < maxImportRate
                 # Calculate the space left in the battery for this slot, We can't charge more than this
-                maxChargeEnergy = self.batteryCapacity - self.powerForPeriod(state.batProfile, chargeRate[0], chargeRate[1])
+                maxChargeEnergy = self.batteryCapacity - self.utils.powerForPeriod(state.batProfile, chargeRate[0], chargeRate[1])
                 # Only allow charging if there's room in the battery for this slot, and its below the max
                 # charge cost allowed
                 willCharge = (chargeCost <= maxAllowedChargeCost) and not next(filter(lambda x: x[0] == chargeRate[0], state.batProfile))[3]
@@ -814,9 +735,9 @@ class PowerControlCore():
                 
                 if rateId == 0: # solar
                     maxCharge = min(timeInSlot * self.maxChargeRate, maxChargeEnergy)
-                    powerMed  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1])
-                    powerLow  = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 1)
-                    powerHigh = self.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 2)
+                    powerMed  = self.utils.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1])
+                    powerLow  = self.utils.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 1)
+                    powerHigh = self.utils.powerForPeriod(state.solarSurplus, chargeRate[0], chargeRate[1], 2)
                     power     = (powerMed, powerLow, powerHigh)[percentileIndex]
                     # we can only add something to the charge plan if there's surplus solar
                     willCharge = willCharge and power > 0
@@ -863,7 +784,7 @@ class PowerControlCore():
                     else:
                         slotUsed = True
                     # If the charge slot is still valid, add it to the plan now
-                    solarCharge = self.powerForPeriod(state.solarChargingPlan, chargeRate[0], chargeRate[1])
+                    solarCharge = self.utils.powerForPeriod(state.solarChargingPlan, chargeRate[0], chargeRate[1])
                     chargeTaken = min((timeInSlot * self.batteryGridChargeRate) - solarCharge, maxChargeEnergy)
                     if willCharge and chargeTaken > 0:
                         # we can only use a charging slot once, so remove it from the available list
@@ -877,9 +798,9 @@ class PowerControlCore():
                 elif rateId == 2: # house on grid power
                     willCharge = willCharge and gridUsageAllowed()
                     if willCharge:
-                        usage     = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1])
-                        usageLow  = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1], 1)
-                        usageHigh = self.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1], 2)
+                        usage     = self.utils.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1])
+                        usageLow  = self.utils.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1], 1)
+                        usageHigh = self.utils.powerForPeriod(state.usageAfterSolar, chargeRate[0], chargeRate[1], 2)
                         # we can only use a charging slot once, so remove it from the available list
                         state.availableHouseGridPoweredRates.remove(chargeRate)
                         state.houseGridPoweredPlan.append((chargeRate[0], chargeRate[1], usage, usageLow, usageHigh))
@@ -907,7 +828,7 @@ class PowerControlCore():
 
     
     def houseRateForPeriod(self, startTime, endTime, exportRateData, importRateData, solarSurplus):
-        surplus = self.powerForPeriod(solarSurplus, startTime, endTime)
+        surplus = self.utils.powerForPeriod(solarSurplus, startTime, endTime)
         if surplus > 0:
             rate = next(filter(lambda x: x[0] == startTime, exportRateData), None)
         else:
@@ -940,8 +861,8 @@ class PowerControlCore():
             timeInSlot             = (slot[1] - slot[0]).total_seconds() / (60 * 60)
             maxExportForSlot       = timeInSlot * self.gridExportLimit
             maxDischargeForSlot    = timeInSlot * self.maxDischargeRate
-            solarSurplusForSlot    = self.powerForPeriod(state.solarSurplus,    slot[0], slot[1])
-            usageAfterSolarForSlot = self.powerForPeriod(state.usageAfterSolar, slot[0], slot[1])
+            solarSurplusForSlot    = self.utils.powerForPeriod(state.solarSurplus,    slot[0], slot[1])
+            usageAfterSolarForSlot = self.utils.powerForPeriod(state.usageAfterSolar, slot[0], slot[1])
             dischargeForSlot       = min(maxDischargeForSlot - usageAfterSolarForSlot, max(0, maxExportForSlot - solarSurplusForSlot))
             if dischargeForSlot > 0:
                 newState = state.copy()
@@ -954,7 +875,7 @@ class PowerControlCore():
         # improve the income
         def dischargeExportSolarSlotTest(state, slot):
             newState          = None
-            solarUsageForSlot = self.powerForPeriod(solarUsage, slot[0], slot[1])
+            solarUsageForSlot = self.utils.powerForPeriod(solarUsage, slot[0], slot[1])
             if solarUsageForSlot > 0:
                 newState = state.copy()
                 newState.dischargeExportSolarPlan.append((slot[0], slot[1], solarUsageForSlot))
@@ -962,7 +883,7 @@ class PowerControlCore():
             
         self.addDischargeSlots(batAllocateState, now, maxImportRate, dischargeExportSolarSlotTest, extendExportPlanTo)
    
-        self.printSeries(batAllocateState.batProfile, "Battery profile - pre topup")
+        self.utils.printSeries(batAllocateState.batProfile, "Battery profile - pre topup")
         # Now allocate any final charge slots topping up the battery as much as possible, but not exceeding
         # the max charge cost. This means we won't end up increasing the overall charge cost per/kwh. In
         # addition, this means that we'll top up to 100% overright if that's the cheaper option, or if the 
@@ -976,10 +897,10 @@ class PowerControlCore():
 
         self.log("Battery top up cost threshold {0:.3f}".format(topUpMaxCost))
         self.log("Max battery charge cost {0:.2f}".format(batAllocateState.maxChargeCost))
-        self.printSeries(batAllocateState.batProfile, "Battery profile - post topup")
+        self.utils.printSeries(batAllocateState.batProfile, "Battery profile - post topup")
         # When calculating the battery profile we allow the "house on grid power" and "grid charging" plans to
         # overlap. However we need to remove this overlap before returning the plan to the caller.
-        batAllocateState.houseGridPoweredPlan = self.opOnSeries(batAllocateState.houseGridPoweredPlan, batAllocateState.gridChargingPlan, lambda a, b: 0 if b else a)
+        batAllocateState.houseGridPoweredPlan = self.utils.opOnSeries(batAllocateState.houseGridPoweredPlan, batAllocateState.gridChargingPlan, lambda a, b: 0 if b else a)
         batAllocateState.houseGridPoweredPlan = list(filter(lambda x: x[2], batAllocateState.houseGridPoweredPlan))
         batAllocateState.sortPlans()
         return batAllocateState
@@ -1007,9 +928,9 @@ class PowerControlCore():
         # We also need to filter out any slots that we're importing / charging from potential discharge 
         # opertinuties
         def filterOutChangeSlotsFromPotentialDischargeSlots(potentialDischargeRates, batState):
-            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.solarChargingPlan,    lambda a, b: 0 if b else a)
-            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.houseGridPoweredPlan, lambda a, b: 0 if b else a)
-            potentialDischargeRates = self.opOnSeries(potentialDischargeRates, batState.gridChargingPlan,     lambda a, b: 0 if b else a)
+            potentialDischargeRates = self.utils.opOnSeries(potentialDischargeRates, batState.solarChargingPlan,    lambda a, b: 0 if b else a)
+            potentialDischargeRates = self.utils.opOnSeries(potentialDischargeRates, batState.houseGridPoweredPlan, lambda a, b: 0 if b else a)
+            potentialDischargeRates = self.utils.opOnSeries(potentialDischargeRates, batState.gridChargingPlan,     lambda a, b: 0 if b else a)
             return potentialDischargeRates
         potentialDischargeRates = filterOutChangeSlotsFromPotentialDischargeSlots(potentialDischargeRates, batAllocateState)
         

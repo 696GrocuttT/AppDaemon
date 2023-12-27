@@ -3,7 +3,8 @@ from datetime   import datetime
 from datetime   import timedelta
 from datetime   import timezone
 from statistics import mean
-from core.powerCore import PowerControlCore
+from core.powerCore  import PowerControlCore
+from core.powerUtils import PowerUtils
 import re
 import math
 import numpy
@@ -21,6 +22,7 @@ class PowerControl(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))        
         self.core                              = PowerControlCore(self.args, self.log)
+        self.utils                             = PowerUtils(self.log) 
         self.solarForecastMargin               = float(self.args['solarForecastMargin'])
         self.solarForecastLowPercentile        = float(self.args['solarForecastLowPercentile'])
         self.solarForecastHighPercentile       = float(self.args['solarForecastHighPercentile'])
@@ -190,13 +192,13 @@ class PowerControl(hass.Hass):
         eddiInfo                 = ("boost" if eddiGridInfo  else
                                     "on"    if eddiSolarInfo else "off")
         # generate a summary string for the combined plan
-        summary                  = ( list(map(lambda x: ("D", x[0]), self.core.mergeSeries(self.core.dischargeExportSolarPlan))) +
-                                     list(map(lambda x: ("E", x[0]), self.core.mergeSeries(self.core.dischargeToGridPlan)))      +
-                                     list(map(lambda x: ("C", x[0]), self.core.mergeSeries(self.core.solarChargingPlan)))        +
-                                     list(map(lambda x: ("G", x[0]), self.core.mergeSeries(self.core.gridChargingPlan)))         +
-                                     list(map(lambda x: ("H", x[0]), self.core.mergeSeries(self.core.houseGridPoweredPlan)))     +
-                                     list(map(lambda x: ("S", x[0]), self.core.mergeSeries(self.core.standbyPlan)))              +
-                                     list(map(lambda x: ("B", x[0]), self.core.mergeSeries(self.core.dischargeToHousePlan))) )
+        summary                  = ( list(map(lambda x: ("D", x[0]), self.utils.mergeSeries(self.core.dischargeExportSolarPlan))) +
+                                     list(map(lambda x: ("E", x[0]), self.utils.mergeSeries(self.core.dischargeToGridPlan)))      +
+                                     list(map(lambda x: ("C", x[0]), self.utils.mergeSeries(self.core.solarChargingPlan)))        +
+                                     list(map(lambda x: ("G", x[0]), self.utils.mergeSeries(self.core.gridChargingPlan)))         +
+                                     list(map(lambda x: ("H", x[0]), self.utils.mergeSeries(self.core.houseGridPoweredPlan)))     +
+                                     list(map(lambda x: ("S", x[0]), self.utils.mergeSeries(self.core.standbyPlan)))              +
+                                     list(map(lambda x: ("B", x[0]), self.utils.mergeSeries(self.core.dischargeToHousePlan))) )
         summary.sort(key=lambda x: x[1])
         summary                  = list(map(lambda x: "{0}{1:%H%M}".format(*x)[:-1], summary))
         summary                  = ",".join(summary)
@@ -226,19 +228,19 @@ class PowerControl(hass.Hass):
                                                                                      "exportRates":              self.core.exportRateDataISO})
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
-                                                                                     "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),
-                                                                                     "dischargeToGridPlan":      self.core.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
-                                                                                     "dischargeToHousePlan":     self.core.seriesToString(self.core.dischargeToHousePlan,     "<br/>", mergeable=True),
-                                                                                     "solarChargingPlan":        self.core.seriesToString(self.core.solarChargingPlan,        "<br/>", mergeable=True),
-                                                                                     "gridChargingPlan":         self.core.seriesToString(self.core.gridChargingPlan,         "<br/>", mergeable=True),
-                                                                                     "houseGridPoweredPlan":     self.core.seriesToString(self.core.houseGridPoweredPlan,     "<br/>", mergeable=True),
-                                                                                     "standbyPlan":              self.core.seriesToString(self.core.standbyPlan,              "<br/>", mergeable=True),
+                                                                                     "dischargeExportSolarPlan": self.utils.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),
+                                                                                     "dischargeToGridPlan":      self.utils.seriesToString(self.core.dischargeToGridPlan,      "<br/>", mergeable=True),
+                                                                                     "dischargeToHousePlan":     self.utils.seriesToString(self.core.dischargeToHousePlan,     "<br/>", mergeable=True),
+                                                                                     "solarChargingPlan":        self.utils.seriesToString(self.core.solarChargingPlan,        "<br/>", mergeable=True),
+                                                                                     "gridChargingPlan":         self.utils.seriesToString(self.core.gridChargingPlan,         "<br/>", mergeable=True),
+                                                                                     "houseGridPoweredPlan":     self.utils.seriesToString(self.core.houseGridPoweredPlan,     "<br/>", mergeable=True),
+                                                                                     "standbyPlan":              self.utils.seriesToString(self.core.standbyPlan,              "<br/>", mergeable=True),
                                                                                      "tariff":                   self.core.pwTariff,
                                                                                      "defPrice":                 self.core.defPrice})
         self.set_state(self.eddiOutputEntityName,        state=eddiInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
-                                                                                     "solarPlan":                self.core.seriesToString(self.core.eddiSolarPlan, "<br/>", mergeable=True),
-                                                                                     "gridPlan":                 self.core.seriesToString(self.core.eddiGridPlan,  "<br/>", mergeable=True)})
+                                                                                     "solarPlan":                self.utils.seriesToString(self.core.eddiSolarPlan, "<br/>", mergeable=True),
+                                                                                     "gridPlan":                 self.utils.seriesToString(self.core.eddiGridPlan,  "<br/>", mergeable=True)})
         # Update the solar actuals and tuning at the end of the day
         if now.hour == 23 and now.minute > 15 and now.minute < 45:
             self.updateSolarActuals(now)
@@ -254,8 +256,8 @@ class PowerControl(hass.Hass):
 
         # pass the production values through a operation so we get a series that's got the same number of elements
         # (and for the same times) as the actuals series. Then combine it with the estimated actuals series.
-        pairedValues = self.core.combineSeries(solarActualsSeries,
-                                               self.core.opOnSeries(solarActualsSeries, self.solarProduction, lambda a, b: b))
+        pairedValues = self.utils.combineSeries(solarActualsSeries,
+                                                self.utils.opOnSeries(solarActualsSeries, self.solarProduction, lambda a, b: b))
         # Combine all the samples for each timeslot
         timeSlots = {}
         for pair in pairedValues:
@@ -328,7 +330,7 @@ class PowerControl(hass.Hass):
                                            x['octopoints_per_kwh']/800), 
                                 new))
             rateData.sort(key=lambda x: x[0])    
-        self.core.printSeries(rateData, "Saving session (" + listName + ")")
+        self.utils.printSeries(rateData, "Saving session (" + listName + ")")
         self.core.savingSession[listName] = rateData
 
 
@@ -462,7 +464,7 @@ class PowerControl(hass.Hass):
             prevMaxEstimate = round(prevMaxEstimate, 3)
             prevPower       = round(percentile50, 3)
             prevMetaData    = (percentile10, prevPower, percentile90)
-        self.core.printSeries(timeRangeTunedPowerData, "Solar forecast")
+        self.utils.printSeries(timeRangeTunedPowerData, "Solar forecast")
         for totals in dailyTotals:
             vals = dailyTotals[totals]
             self.log("Total for {0:%d %B} : {1:.3f} {2:.3f} {3:.3f}".format(totals, vals[0], vals[1], vals[2]))
@@ -485,7 +487,7 @@ class PowerControl(hass.Hass):
                 rateData = list(map(lambda x: (x[0], x[1], override.get(x[2], x[2])), 
                                     rateData))
             rateData.sort(key=lambda x: x[0])    
-            self.core.printSeries(rateData, "Rate data (" + type + ")")
+            self.utils.printSeries(rateData, "Rate data (" + type + ")")
         return rateData
 
 
@@ -548,7 +550,7 @@ class PowerControl(hass.Hass):
         self.log("Eddi data updated")
         timeRangeEddiGridUsageData  = self.processUsageDataToTimeRange(self.eddiGridData)
         timeRangeEddiSolarUsageData = self.processUsageDataToTimeRange(self.eddiSolarData)
-        self.core.eddiData          = self.core.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
+        self.core.eddiData          = self.utils.opOnSeries(timeRangeEddiGridUsageData, timeRangeEddiSolarUsageData, lambda a, b: a+b)
 
 
     def fastEddiHistoryCallBack1(self, kwargs):
@@ -588,12 +590,12 @@ class PowerControl(hass.Hass):
                 daysDelta      = timedelta(days=days)
                 # For each half hour period we subtract the eddi usage from the total usage. We don't
                 # want the eddi distorting the usage totals as we explicitly plan the eddi usage seperately.
-                usageForPeriod = self.core.powerForPeriod(timeRangeUsageData, 
-                                                          forecastUsageStartTime - daysDelta, 
-                                                          forecastUsageEndTime   - daysDelta)
-                eddiForPeriod  = self.core.powerForPeriod(self.core.eddiData, 
-                                                          forecastUsageStartTime - daysDelta, 
-                                                          forecastUsageEndTime   - daysDelta)
+                usageForPeriod = self.utils.powerForPeriod(timeRangeUsageData, 
+                                                           forecastUsageStartTime - daysDelta, 
+                                                           forecastUsageEndTime   - daysDelta)
+                eddiForPeriod  = self.utils.powerForPeriod(self.core.eddiData, 
+                                                           forecastUsageStartTime - daysDelta, 
+                                                           forecastUsageEndTime   - daysDelta)
                 avgUsage       = avgUsage + (usageForPeriod - eddiForPeriod)
             avgUsage = (avgUsage / self.usageDaysHistory) * self.usageMargin
             # finally add the data to the usage array
@@ -601,7 +603,7 @@ class PowerControl(hass.Hass):
             forecastUsageStartTime = forecastUsageEndTime
         # Extend the usage forcast into the future by the number of house in the planning window
         forecastUsage = self.core.extendSeries(forecastUsage, timedelta(hours=24))        
-        self.core.printSeries(forecastUsage, "Usage forecast")
+        self.utils.printSeries(forecastUsage, "Usage forecast")
         self.core.usageData = forecastUsage
         # If there's not been an output update so far, force it now
         if not bool(self.core.planUpdateTime): 

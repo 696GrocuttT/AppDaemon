@@ -221,7 +221,9 @@ class PowerControl(hass.Hass):
 
         self.set_state(self.batteryPlanSummaryEntityName, state=summary, attributes={"summary":                  self.core.gridSummary,
                                                                                      "importProfile":            self.core.importProfileISO,
-                                                                                     "exportProfile":            self.core.exportProfileISO})
+                                                                                     "exportProfile":            self.core.exportProfileISO,
+                                                                                     "importRates":              self.core.importRateDataISO,
+                                                                                     "exportRates":              self.core.exportRateDataISO})
         self.set_state(self.batteryModeOutputEntityName, state=modeInfo, attributes={"planUpdateTime":           self.core.planUpdateTime,
                                                                                      "stateUpdateTime":          now,
                                                                                      "dischargeExportSolarPlan": self.core.seriesToString(self.core.dischargeExportSolarPlan, "<br/>", mergeable=True),

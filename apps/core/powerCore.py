@@ -445,14 +445,18 @@ class PowerControlCore():
         self.gridSummary       = { "import": importDict,
                                    "export": exportDict,
                                    "net":    netDict}
-        convertTimes           = lambda a: {"start":  a[0].isoformat(), 
+        profileIsoConvert      = lambda a: {"start":  a[0].isoformat(), 
                                             "end":    a[1].isoformat(), 
                                             "energy": a[2], 
                                             "cost":   a[3],
                                             "rate":   a[4]}
-        self.exportProfileISO  = list(map(convertTimes, exportProfile))
-        self.importProfileISO  = list(map(convertTimes, importProfile))
-        print(self.importProfileISO)
+        self.exportProfileISO  = list(map(profileIsoConvert, exportProfile))
+        self.importProfileISO  = list(map(profileIsoConvert, importProfile))
+        rateIsoConvert         = lambda a: {"start":  a[0].isoformat(), 
+                                            "end":    a[1].isoformat(), 
+                                            "rate":   a[2]}
+        self.exportRateDataISO = list(map(rateIsoConvert, exportRateData))
+        self.importRateDataISO = list(map(rateIsoConvert, importRateData))
         
         # Create a fake tariff with peak time covering the discharge plan
         # Normally we wouldn't have the solarChargePlan as one of the peak periods. There is some deep 

@@ -2,6 +2,7 @@ import hassapi as hass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
+from dateutil import tz
 from core.powerUtils import PowerUtils
 import math
 
@@ -12,7 +13,9 @@ class CheapestTime(hass.Hass):
         self.log("Starting with arguments " + str(self.args))
         self.utils                   = PowerUtils(self.log) 
         batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
-
+        self.startTimeEntityName     = self.args['startTimeEntity']
+        self.programTime = None
+        
         # Setup getting the rates, profiles, and charge cost
         for listName in ["import", "export"]:
             attributeName = listName + "Rates"
@@ -23,6 +26,12 @@ class CheapestTime(hass.Hass):
             self.listen_state(self.profileChanged, batteryPlanSummaryEntityName,  attribute=attributeName, kwargs=listName) 
         self.chargeCostChanged(None, None, None, self.get_state(batteryPlanSummaryEntityName, attribute="maxChargeCost"), None)
         self.listen_state(self.chargeCostChanged, batteryPlanSummaryEntityName, attribute="maxChargeCost") 
+        # listen for the condition entities
+        self.conditions = self.args.get('conditions', [])
+        for (index, condition) in enumerate(self.conditions):
+            entityName = condition['entity']
+            self.conditionChanged(None, None, None, self.get_state(entityName), {'kwargs': index})
+            self.listen_state(self.conditionChanged, entityName, kwargs=index)
         # Get the time required for the program to run
         programTimeEntityName = self.args['programTimeEntity']
         self.programTimeChanged(None, None, None, self.get_state(programTimeEntityName), None)
@@ -38,12 +47,22 @@ class CheapestTime(hass.Hass):
         self.run_every(self.createPlan, startTime, 30*60)
 
 
+    def conditionChanged(self, entity, attribute, old, new, kwargs):
+        index = kwargs['kwargs']
+        self.conditions[index]['curValue'] = new
+        # Update the plan immediatly as this notification is in responce to a user action
+        self.createPlan(None)
+
+
     def programTimeChanged(self, entity, attribute, old, new, kwargs):
         splitTimeStr = new.split(':')
         if len(splitTimeStr) == 2:
             self.programTime = timedelta(hours=int(splitTimeStr[0]), minutes=int(splitTimeStr[1]))
         else:
             self.programTime = None
+        self.log("program length changed " + str(self.programTime))
+        # Update the plan immediatly as this notification is in responce to a user action
+        self.createPlan(None)
         
 
     def chargeCostChanged(self, entity, attribute, old, new, kwargs):
@@ -83,47 +102,67 @@ class CheapestTime(hass.Hass):
         bestCost = math.inf
         bestPlan = []
         if self.programTime:
-            # Create a rate series that's a combination of the import rate, export rate, or battery charge cost 
-            # depending on what's being used at any given point in time
-            usedImportRates     = self.utils.opOnSeries(self.importProfile,  self.importRateData, lambda a, b: b)
-            usedExportRates     = self.utils.opOnSeries(self.exportProfile,  self.exportRateData, lambda a, b: b)
-            paddedImportProfile = self.utils.opOnSeries(self.importRateData, self.importProfile,  lambda a, b: b)
-            paddedExportProfile = self.utils.opOnSeries(self.exportRateData, self.exportProfile,  lambda a, b: b)
-            paddedDefaultRate   = self.utils.opOnSeries(paddedImportProfile, paddedExportProfile, lambda a, b: 0 if (a > 0) or (b > 0) else self.maxChargeCost)
-            combRates           = self.utils.opOnSeries(paddedDefaultRate,   usedImportRates,     lambda a, b: a + b)
-            combRates           = self.utils.opOnSeries(combRates,           usedExportRates,     lambda a, b: a + b)
-            combRates           = sorted(combRates, key=lambda x: x[0])
-
-            # Check each slock in the rates as a potential starting point
-            numRates = len(combRates)
-            for rateStartIdx in range(numRates):
-                candidateCost     = 0
-                candidatePlan     = []
-                curtIdx           = rateStartIdx
-                remainingPlanTime = self.programTime
-                while remainingPlanTime > timedelta() and curtIdx < numRates:
-                    slot                   = combRates[curtIdx]
-                    slotLength             = slot[1] - slot[0]
-                    slotLengthUsed         = min(slotLength, remainingPlanTime)
-                    slotLengthDecimalHours = slotLengthUsed.total_seconds() / (60 * 60)
-                    # We don't have power usage throughout the machine cycles, so just assume its a flat unity 
-                    # power for the moment.
-                    slotCost               = slot[2] * slotLengthDecimalHours
-                    candidateCost          = candidateCost + slotCost
-                    candidatePlan.append(slot + (slotCost,))
-                    # rotate vars for the next slot
-                    remainingPlanTime      = remainingPlanTime - slotLength   
-                    curtIdx                = curtIdx + 1
-                # do we have a valid candidate plan
-                if remainingPlanTime > timedelta():
-                    break
-                elif candidateCost < bestCost:
-                    bestCost = candidateCost
-                    bestPlan = candidatePlan
+            self.log("program length " + str(self.programTime))
+            # Check any conditions
+            conditionsPassed = True
+            for condition in self.conditions:
+                passed           = (condition['curValue'] != condition['expectedValue']) == condition.get('invert', False)
+                self.log("condition check " + condition['entity'] + " " + str(passed))
+                conditionsPassed = conditionsPassed and passed
+            
+            if conditionsPassed:
+                # Create a rate series that's a combination of the import rate, export rate, or battery charge cost 
+                # depending on what's being used at any given point in time
+                usedImportRates     = self.utils.opOnSeries(self.importProfile,  self.importRateData, lambda a, b: b)
+                usedExportRates     = self.utils.opOnSeries(self.exportProfile,  self.exportRateData, lambda a, b: b)
+                paddedImportProfile = self.utils.opOnSeries(self.importRateData, self.importProfile,  lambda a, b: b)
+                paddedExportProfile = self.utils.opOnSeries(self.exportRateData, self.exportProfile,  lambda a, b: b)
+                paddedDefaultRate   = self.utils.opOnSeries(paddedImportProfile, paddedExportProfile, lambda a, b: 0 if (a > 0) or (b > 0) else self.maxChargeCost)
+                combRates           = self.utils.opOnSeries(paddedDefaultRate,   usedImportRates,     lambda a, b: a + b)
+                combRates           = self.utils.opOnSeries(combRates,           usedExportRates,     lambda a, b: a + b)
+                combRates           = sorted(combRates, key=lambda x: x[0])
+    
+                # Check each slock in the rates as a potential starting point
+                numRates = len(combRates)
+                for rateStartIdx in range(numRates):
+                    candidateCost     = 0
+                    candidatePlan     = []
+                    curtIdx           = rateStartIdx
+                    remainingPlanTime = self.programTime
+                    while remainingPlanTime > timedelta() and curtIdx < numRates:
+                        slot                   = combRates[curtIdx]
+                        slotLength             = slot[1] - slot[0]
+                        slotLengthUsed         = min(slotLength, remainingPlanTime)
+                        slotLengthDecimalHours = slotLengthUsed.total_seconds() / (60 * 60)
+                        # We don't have power usage throughout the machine cycles, so just assume its a flat unity 
+                        # power for the moment.
+                        slotCost               = slot[2] * slotLengthDecimalHours
+                        candidateCost          = candidateCost + slotCost
+                        candidatePlan.append(slot + (slotCost,))
+                        # rotate vars for the next slot
+                        remainingPlanTime      = remainingPlanTime - slotLength   
+                        curtIdx                = curtIdx + 1
+                    # do we have a valid candidate plan
+                    if remainingPlanTime > timedelta():
+                        break
+                    elif candidateCost < bestCost:
+                        bestCost = candidateCost
+                        bestPlan = candidatePlan
 
         # if we found a plan then output it for debug
         if bestPlan:
-            self.utils.printSeries(bestPlan, "Appliance plan" )
+            self.utils.printSeries(bestPlan, "Appliance plan" ) 
+            startTime         = bestPlan[0][0]
+            endTime           = bestPlan[-1][1]
+            startTimeStr      = startTime.isoformat()
+            startTimeLocalStr = startTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
+            endTimeLocalStr   = endTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
+            displayStr        = startTimeLocalStr + " -> " + endTimeLocalStr
+        else:
+            startTimeStr = ""
+            displayStr   = ""
+        self.set_state(self.startTimeEntityName, state=startTimeStr, attributes={"display": displayStr})
+
   
                     
         

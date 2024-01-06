@@ -157,7 +157,7 @@ class CheapestTime(hass.Hass):
             startTimeStr      = startTime.isoformat()
             startTimeLocalStr = startTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
             endTimeLocalStr   = endTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
-            displayStr        = startTimeLocalStr + " -> " + endTimeLocalStr
+            displayStr        = startTimeLocalStr + " > " + endTimeLocalStr
         else:
             startTimeStr = ""
             displayStr   = ""

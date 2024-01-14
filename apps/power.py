@@ -363,15 +363,17 @@ class PowerControl(hass.Hass):
 
         
     def batteryCapacityChanged(self, entity, attribute, old, new, kwargs):
-        new = float(new) / 1000
-        self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.core.batteryCapacity, new))
-        self.core.batteryCapacity = new        
+        new = self.core.toFloat(new, None)
+        if new != None:
+            self.log("Battery capacity changed {0:.3f} -> {1:.3f}".format(self.core.batteryCapacity, new))
+            self.core.batteryCapacity = new        
 
 
     def batteryEnergyChanged(self, entity, attribute, old, new, kwargs):
-        new = float(new) / 1000
-        self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.core.batteryEnergy, new))
-        self.core.batteryEnergy = new
+        new = self.core.toFloat(new, None)
+        if new != None:
+            self.log("Battery energy changed {0:.3f} -> {1:.3f}".format(self.core.batteryEnergy, new))
+            self.core.batteryEnergy = new
         
         
     def solarChanged(self, entity, attribute, old, new, kwargs):

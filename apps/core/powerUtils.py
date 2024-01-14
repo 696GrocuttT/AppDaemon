@@ -82,8 +82,8 @@ class PowerUtils():
         return mergedSeries
 
 
-    def printSeries(self, series, title, mergeable=False):
-        self.log(title + ":\n" + self.seriesToString(series, "\n", mergeable))
+    def printSeries(self, series, title, mergeable=False, level="WARNING"):
+        self.log(title + ":\n" + self.seriesToString(series, "\n", mergeable), level=level)
         
         
     def combineSeries(self, baseSeries, *args):

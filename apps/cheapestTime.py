@@ -14,7 +14,7 @@ class CheapestTime(hass.Hass):
         self.utils                   = PowerUtils(self.log) 
         batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
         self.startTimeEntityName     = self.args['startTimeEntity']
-        self.programTime = None
+        self.programTime             = None
         
         # Setup getting the rates, profiles, and charge cost
         for listName in ["import", "export"]:
@@ -32,6 +32,17 @@ class CheapestTime(hass.Hass):
             entityName = condition['entity']
             self.conditionChanged(None, None, None, self.get_state(entityName), {'kwargs': index})
             self.listen_state(self.conditionChanged, entityName, kwargs=index)
+        # listen for finish by info 
+        finishByOnEntityName = self.args.get('finishByOnEntity',   None)
+        if finishByOnEntityName:    
+            finishByOn = self.get_state(finishByOnEntityName)
+            self.listen_state(self.finishByOnChanged, finishByOnEntityName)
+            finishByTimeEntityName  = self.args.get('finishByTimeEntity', None)
+            self.finishByTimeChanged(None, None, None, self.get_state(finishByTimeEntityName), None)
+            self.listen_state(self.finishByTimeChanged, finishByTimeEntityName)
+        else:
+            finishByOn = False
+        self.finishByOnChanged(None, None, None, finishByOn, None)
         # Get the time required for the program to run
         programTimeEntityName = self.args['programTimeEntity']
         self.programTimeChanged(None, None, None, self.get_state(programTimeEntityName), None)
@@ -46,6 +57,28 @@ class CheapestTime(hass.Hass):
             startTime = startTime + period
         self.run_every(self.createPlan, startTime, 30*60)
 
+
+    def finishByOnChanged(self, entity, attribute, old, new, kwargs):
+        self.finishByOn = new == "on"
+        self.log("finish by enabled " + str(self.finishByOn))
+        # Update the plan immediatly as this notification is in responce to a user action
+        self.createPlan(None)
+
+
+    def finishByTimeChanged(self, entity, attribute, old, new, kwargs):
+        finishBySplit = new.split(':')
+        now           = datetime.now(tz.gettz())
+        finishByTime  = now.replace(hour        = int(finishBySplit[0]), 
+                                    minute      = int(finishBySplit[1]), 
+                                    second      = int(finishBySplit[2]),
+                                    microsecond = 0)
+        if finishByTime < now:
+            finishByTime = finishByTime + timedelta(days=1)
+        self.finishByTime = finishByTime
+        self.log("finish by " + str(self.finishByTime))
+        # Update the plan immediatly as this notification is in responce to a user action
+        self.createPlan(None)
+        
 
     def conditionChanged(self, entity, attribute, old, new, kwargs):
         index = kwargs['kwargs']
@@ -76,7 +109,7 @@ class CheapestTime(hass.Hass):
                                        x['rate']), 
                             new))
         rateData.sort(key=lambda x: x[0])    
-        self.utils.printSeries(rateData, "Rate data (" + rateName + ")")
+        self.utils.printSeries(rateData, "Rate data (" + rateName + ")", level="DEBUG")
         if rateName == "import":
             self.importRateData = rateData
         else:
@@ -90,7 +123,7 @@ class CheapestTime(hass.Hass):
                                           x['energy']), 
                                new))
         profileData.sort(key=lambda x: x[0])    
-        self.utils.printSeries(profileData, "Profile data (" + profileName + ")")
+        self.utils.printSeries(profileData, "Profile data (" + profileName + ")", level="DEBUG")
         if profileName == "import":
             self.importProfile = profileData
         else:
@@ -121,8 +154,11 @@ class CheapestTime(hass.Hass):
                 combRates           = self.utils.opOnSeries(paddedDefaultRate,   usedImportRates,     lambda a, b: a + b)
                 combRates           = self.utils.opOnSeries(combRates,           usedExportRates,     lambda a, b: a + b)
                 combRates           = sorted(combRates, key=lambda x: x[0])
+                # Filter out any rates that end after the finish by time
+                if self.finishByOn:
+                    combRates = list(filter(lambda x: x[1] <= self.finishByTime, combRates))
     
-                # Check each slock in the rates as a potential starting point
+                # Check each slot in the rates as a potential starting point
                 numRates = len(combRates)
                 for rateStartIdx in range(numRates):
                     candidateCost     = 0

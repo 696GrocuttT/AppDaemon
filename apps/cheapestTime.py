@@ -47,6 +47,8 @@ class CheapestTime(hass.Hass):
         programTimeEntityName = self.args['programTimeEntity']
         self.programTimeChanged(None, None, None, self.get_state(programTimeEntityName), None)
         self.listen_state(self.programTimeChanged, programTimeEntityName) 
+        # Set the default state to an empty string so we've always got something
+        self.set_state(self.startTimeEntityName, state="", attributes={"display": ""})
         # Now we have all the data do an initial plan
         self.createPlan(None)
         # Schedule future updates every 30 minutes to align with rate charges

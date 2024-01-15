@@ -95,8 +95,8 @@ class PowerControl(hass.Hass):
         # Setup getting battery stats        
         batteryCapacityEntityName = self.args['batteryCapacity']
         batteryEnergyEntityName   = self.args['batteryEnergy']
-        self.core.batteryCapacity = float(self.get_state(batteryCapacityEntityName)) / 1000
-        self.core.batteryEnergy   = float(self.get_state(batteryEnergyEntityName))   / 1000
+        self.core.batteryCapacity = float(self.get_state(batteryCapacityEntityName))
+        self.core.batteryEnergy   = float(self.get_state(batteryEnergyEntityName))
         self.listen_state(self.batteryCapacityChanged, batteryCapacityEntityName) 
         self.listen_state(self.batteryEnergyChanged, batteryEnergyEntityName)
         # Setup getting gas rate

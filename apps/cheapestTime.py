@@ -15,6 +15,7 @@ class CheapestTime(hass.Hass):
         batteryPlanSummaryEntityName = self.args['batteryPlanSummaryEntity']
         self.startTimeEntityName     = self.args['startTimeEntity']
         self.programTime             = None
+        self.intReadyFlag            = True
         
         # Setup getting the rates, profiles, and charge cost
         for listName in ["import", "export"]:
@@ -32,6 +33,16 @@ class CheapestTime(hass.Hass):
             entityName = condition['entity']
             self.conditionChanged(None, None, None, self.get_state(entityName), {'kwargs': index})
             self.listen_state(self.conditionChanged, entityName, kwargs=index)
+        # Listen for ready set/clear events
+        clearReadyEntityName = self.args.get('clearReadyEntity', None)
+        if clearReadyEntityName:
+            setReadyEntityName   = self.args['setReadyEntity']        
+            self.clearReadyValue = self.args['clearReadyValue']
+            self.setReadyValue   = self.args['setReadyValue']        
+            self.clearReadyChanged(None, None, None, self.get_state(clearReadyEntityName), None)
+            self.listen_state(self.clearReadyChanged, clearReadyEntityName)        
+            self.setReadyChanged(None, None, None, self.get_state(setReadyEntityName), None)
+            self.listen_state(self.setReadyChanged, setReadyEntityName)
         # listen for finish by info 
         finishByOnEntityName = self.args.get('finishByOnEntity',   None)
         if finishByOnEntityName:    
@@ -80,7 +91,23 @@ class CheapestTime(hass.Hass):
         self.log("finish by " + str(self.finishByTime))
         # Update the plan immediatly as this notification is in responce to a user action
         self.createPlan(None)
-        
+
+
+    def clearReadyChanged(self, entity, attribute, old, new, kwargs):
+        if self.clearReadyValue == new:
+            self.intReadyFlag = False
+            self.log("clear ready")
+            # Update the plan immediatly as this notification is in responce to a user action
+            self.createPlan(None)
+
+
+    def setReadyChanged(self, entity, attribute, old, new, kwargs):
+        if self.setReadyValue == new:
+            self.intReadyFlag = True
+            self.log("set ready")
+            # Update the plan immediatly as this notification is in responce to a user action
+            self.createPlan(None)
+
 
     def conditionChanged(self, entity, attribute, old, new, kwargs):
         index = kwargs['kwargs']
@@ -145,7 +172,7 @@ class CheapestTime(hass.Hass):
                 self.log("condition check " + condition['entity'] + " " + str(passed))
                 conditionsPassed = conditionsPassed and passed
             
-            if conditionsPassed:
+            if conditionsPassed and self.intReadyFlag:
                 # Create a rate series that's a combination of the import rate, export rate, or battery charge cost 
                 # depending on what's being used at any given point in time
                 usedImportRates     = self.utils.opOnSeries(self.importProfile,  self.importRateData, lambda a, b: b)

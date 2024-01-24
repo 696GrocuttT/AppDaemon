@@ -161,16 +161,18 @@ class CheapestTime(hass.Hass):
 
     def createPlan(self, kwargs):
         # We only plan if there's a valid program time
-        bestCost = math.inf
-        bestPlan = []
+        bestCost   = math.inf
+        bestPlan   = []
+        attributes = {'intReadyFlag': self.intReadyFlag}
         if self.programTime:
             self.log("program length " + str(self.programTime))
             # Check any conditions
             conditionsPassed = True
             for condition in self.conditions:
-                passed           = (condition['curValue'] != condition['expectedValue']) == condition.get('invert', False)
+                passed                          = (condition['curValue'] != condition['expectedValue']) == condition.get('invert', False)
+                attributes[condition['entity']] = passed
+                conditionsPassed                = conditionsPassed and passed
                 self.log("condition check " + condition['entity'] + " " + str(passed))
-                conditionsPassed = conditionsPassed and passed
             
             if conditionsPassed and self.intReadyFlag:
                 # Create a rate series that's a combination of the import rate, export rate, or battery charge cost 
@@ -217,16 +219,16 @@ class CheapestTime(hass.Hass):
         # if we found a plan then output it for debug
         if bestPlan:
             self.utils.printSeries(bestPlan, "Appliance plan" ) 
-            startTime         = bestPlan[0][0]
-            endTime           = bestPlan[-1][1]
-            startTimeStr      = startTime.isoformat()
-            startTimeLocalStr = startTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
-            endTimeLocalStr   = endTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
-            displayStr        = startTimeLocalStr + " > " + endTimeLocalStr
+            startTime             = bestPlan[0][0]
+            endTime               = bestPlan[-1][1]
+            startTimeStr          = startTime.isoformat()
+            startTimeLocalStr     = startTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
+            endTimeLocalStr       = endTime.astimezone(tz.gettz()).strftime("%-I:%M %p")
+            attributes['display'] = startTimeLocalStr + " > " + endTimeLocalStr
         else:
-            startTimeStr = ""
-            displayStr   = None
-        self.set_state(self.startTimeEntityName, state=startTimeStr, attributes={"display": displayStr})
+            startTimeStr          = ""
+            attributes['display'] = None
+        self.set_state(self.startTimeEntityName, state=startTimeStr, attributes=attributes)
 
   
                     

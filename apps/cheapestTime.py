@@ -163,7 +163,8 @@ class CheapestTime(hass.Hass):
         # We only plan if there's a valid program time
         bestCost   = math.inf
         bestPlan   = []
-        attributes = {'intReadyFlag': self.intReadyFlag}
+        attributes = {'intReadyFlag': self.intReadyFlag, 
+                      'programTime':  self.programTime}
         if self.programTime:
             self.log("program length " + str(self.programTime))
             # Check any conditions

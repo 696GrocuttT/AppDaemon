@@ -31,7 +31,7 @@ class CheapestTime(hass.Hass):
         self.conditions = self.args.get('conditions', [])
         for (index, condition) in enumerate(self.conditions):
             entityName = condition['entity']
-            self.conditionChanged(None, None, None, self.get_state(entityName), {'kwargs': index})
+            self.conditionChanged(entityName, None, None, self.get_state(entityName), {'kwargs': index})
             self.listen_state(self.conditionChanged, entityName, kwargs=index)
         # Listen for ready set/clear events
         clearReadyEntityName = self.args.get('clearReadyEntity', None)
@@ -79,16 +79,8 @@ class CheapestTime(hass.Hass):
 
 
     def finishByTimeChanged(self, entity, attribute, old, new, kwargs):
-        finishBySplit = new.split(':')
-        now           = datetime.now(tz.gettz())
-        finishByTime  = now.replace(hour        = int(finishBySplit[0]), 
-                                    minute      = int(finishBySplit[1]), 
-                                    second      = int(finishBySplit[2]),
-                                    microsecond = 0)
-        if finishByTime < now:
-            finishByTime = finishByTime + timedelta(days=1)
-        self.finishByTime = finishByTime
-        self.log("finish by " + str(self.finishByTime))
+        self.finishBy = new
+        self.log("finish by " + new)
         # Update the plan immediatly as this notification is in responce to a user action
         self.createPlan(None)
 
@@ -112,6 +104,7 @@ class CheapestTime(hass.Hass):
     def conditionChanged(self, entity, attribute, old, new, kwargs):
         index = kwargs['kwargs']
         self.conditions[index]['curValue'] = new
+        self.log("condition " + entity + " changed " + str(new))
         # Update the plan immediatly as this notification is in responce to a user action
         self.createPlan(None)
 
@@ -175,6 +168,7 @@ class CheapestTime(hass.Hass):
                 conditionsPassed                = conditionsPassed and passed
                 self.log("condition check " + condition['entity'] + " " + str(passed))
             
+            self.log("condition checks complete " + str(conditionsPassed) + " " + str(self.intReadyFlag))
             if conditionsPassed and self.intReadyFlag:
                 # Create a rate series that's a combination of the import rate, export rate, or battery charge cost 
                 # depending on what's being used at any given point in time
@@ -188,8 +182,18 @@ class CheapestTime(hass.Hass):
                 combRates           = sorted(combRates, key=lambda x: x[0])
                 # Filter out any rates that end after the finish by time
                 if self.finishByOn:
-                    combRates = list(filter(lambda x: x[1] <= self.finishByTime, combRates))
+                    finishBySplit = self.finishBy.split(':')
+                    now           = datetime.now(tz.gettz())
+                    finishByTime  = now.replace(hour        = int(finishBySplit[0]), 
+                                                minute      = int(finishBySplit[1]), 
+                                                second      = int(finishBySplit[2]),
+                                                microsecond = 0)
+                    if finishByTime < now:
+                        finishByTime = finishByTime + timedelta(days=1)
+                    self.log("Applying finish by " + str(finishByTime))
+                    combRates = list(filter(lambda x: x[1] <= finishByTime, combRates))
     
+                self.utils.printSeries(combRates, "Candidates rates")
                 # Check each slot in the rates as a potential starting point
                 numRates = len(combRates)
                 for rateStartIdx in range(numRates):
@@ -219,7 +223,7 @@ class CheapestTime(hass.Hass):
 
         # if we found a plan then output it for debug
         if bestPlan:
-            self.utils.printSeries(bestPlan, "Appliance plan" ) 
+            self.utils.printSeries(bestPlan, "Appliance plan") 
             startTime             = bestPlan[0][0]
             endTime               = bestPlan[-1][1]
             startTimeStr          = startTime.isoformat()

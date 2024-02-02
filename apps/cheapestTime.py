@@ -190,6 +190,8 @@ class CheapestTime(hass.Hass):
                                                 microsecond = 0)
                     if finishByTime < now:
                         finishByTime = finishByTime + timedelta(days=1)
+                    if (now + self.programTime) > finishByTime:
+                        finishByTime = finishByTime + timedelta(days=1)
                     self.log("Applying finish by " + str(finishByTime))
                     combRates = list(filter(lambda x: x[1] <= finishByTime, combRates))
     

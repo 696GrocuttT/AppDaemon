@@ -7,7 +7,7 @@ import re
 class WeatherMonitor(hass.Hass):
     def initialize(self):
         self.log("Starting with arguments " + str(self.args))
-        entityBaseNames = ['weather', 'probability_of_precipitation', 'visibility_distance',
+        entityBaseNames = ['weather', 'probability_of_precipitation', 'visibility',
                            'wind_direction', 'wind_gust', 'wind_speed',
                            'temperature', 'humidity']
         self.outputEntity  = self.args['outputEntity']
@@ -45,7 +45,10 @@ class WeatherMonitor(hass.Hass):
         data  = values[key]
         value = data['value']
         try:
-            value = str(int((float(value) * scale) + 0.5))
+            if value == None:
+                value = "Unknown"
+            else:
+                value = str(int((float(value) * scale) + 0.5))
         except ValueError:
             pass
         if value.islower():
@@ -63,7 +66,7 @@ class WeatherMonitor(hass.Hass):
         output = []
         output.append(self.itemStr(values, 'weather'))
         output.append("Rain: " + self.itemStr(values, 'probability_of_precipitation') + 
-                      " Vis: " + self.itemStr(values, 'visibility_distance'))
+                      " Vis: " + self.itemStr(values, 'visibility'))
         output.append("Temp: " + self.itemStr(values, 'temperature') +
                       " Hum: " + self.itemStr(values, 'humidity')) 
         output.append("Wind: " + self.itemStr(values, 'wind_direction')           + 

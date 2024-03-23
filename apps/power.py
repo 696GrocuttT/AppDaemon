@@ -318,7 +318,8 @@ class PowerControl(hass.Hass):
             override = self.tariffOverrides['gas']
             if override:
                 new = override.get(new, new)
-            self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(float(old), new))
+            oldSafeVal = self.core.toFloat(old, math.nan)
+            self.log("Gas rate changed {0:.3f} -> {1:.3f}".format(oldSafeVal, new))
             self.core.gasRate = new
 
 

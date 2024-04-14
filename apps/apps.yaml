@@ -1,0 +1,192 @@
+landing_light:
+  module:            base
+  class:             BasicInactiveAutoOff
+  log_level:         ERROR
+  inputEntity:       "binary_sensor.alarm_zone_landing"
+  inputEvent:        "trigger_landing_light"
+  outputEntity:      "light.landing_light"
+  extraOnConditions: 
+    - "self.get_state('sun.sun', 'elevation') < 4"
+    - "self.isAfterTime(hour=6, minute=30)"
+    - "self.isBeforeTime(hour=23, minute=00)"
+
+
+
+main_bathroom_fan:
+  module:            base
+  class:             BathroomFanAutoOff
+  log_level:         ERROR
+  inputEntity:       "binary_sensor.main_bathroom_fan_input"
+  outputEntity:      "input_boolean.main_bathroom_fan"
+  autoOffTimeDelay:  1200
+  extraOnConditions:
+    - "self.isAfterTime(hour=6)"
+    - "self.isBeforeTime(hour=21, minute=30)"
+
+
+
+system_monitor:
+  module:       monitor
+  class:        SystemMonitor
+  log_level:    ERROR
+  outputEntity: input_text.warnings
+  alertEntity:  input_boolean.alert
+  entities:
+    - entityRegex:   'update\..*'
+      triggerValue:  'on'
+      message:       "Update: %name%"
+      priority:      2
+    - entityRegex:   'binary_sensor.grid_status'
+      triggerValue:  'off'
+      message:       "Grid power outage"
+      priority:      9
+    - entityRegex:   'binary_sensor.powerwall_connected_to_tesla'
+      triggerValue:  'off'
+      message:       "Powerwall lost Tesla connection"
+      priority:      8
+    - entityRegex:   'binary_sensor.powerwall_status'
+      triggerValue:  'off'
+      message:       "Powerwall off"
+      priority:      5
+    - entityRegex:   'sensor\.powerwall_standby_error'
+      triggerValue:  'False'
+      invertTrigger: true
+      duration:      190
+      message:       "Powerwall not in standby"
+      priority:      4
+    - entityRegex:   'sensor\.powerwall_charging_error'
+      triggerValue:  'False'
+      invertTrigger: true
+      duration:      190
+      message:       "Powerwall not charging"
+      priority:      9
+    - entityRegex:   'sensor\.powerwall_grid_charge_error'
+      triggerValue:  'False'
+      invertTrigger: true
+      duration:      190
+      message:       "Powerwall not grid charging"
+      priority:      9
+    - entityRegex:   'sensor\.powerwall_discharging_error'
+      triggerValue:  'False'
+      invertTrigger: true
+      duration:      190
+      message:       "Powerwall not discharging"
+      priority:      9 
+    - entityRegex:   'sensor\.powerwall_unrequested_grid_charge_error'
+      triggerValue:  'False'
+      invertTrigger: true
+      duration:      190
+      message:       "Powerwall unrequested grid charging"
+      priority:      10
+    - entityRegex:   'automation\.powerwall_.*_mode'
+      nameRegex:     'Powerwall (.*)'
+      triggerValue:  'off'
+      duration:      7200
+      message:       "Disabled: PW %name%"
+      priority:      6
+    - entityRegex:   'sensor.octopus_(.*)_saving_session'
+      nameRegex:     'Octopus (.*) saving session'
+      triggerValue:  ''
+      invertTrigger: true
+      duration:      60
+      message:       "%Name% sesh: %value%"
+      priority:      4
+    - entityRegex:   'sensor.travel_time_delay_.*'
+      nameRegex:     'Delay (.*)'
+      triggerValue:  '-1'
+      invertTrigger: true
+      message:       '%Name% delay: %value%'
+      priority:      '7 if int(entityDict["value"]) > 15 else 2'
+ 
+ 
+
+weather:
+  module:       weather
+  class:        WeatherMonitor
+  log_level:    ERROR
+  outputEntity: input_text.weather_summary
+  locations:
+    - title:        'Sibson now'
+      entityPrefix: 'sensor.wittering_'
+      entitySuffix: '_3_hourly'
+    - title:        'Sibson daily'
+      entityPrefix: 'sensor.wittering_'
+      entitySuffix: '_daily'
+
+
+
+power_control:
+  module:                               power
+  class:                                PowerControl
+  log_level:                            DEBUG
+  extendTariff:                         true 
+  usageDaysHistory:                     3
+  gasRateEntity:                        sensor.octopus_energy_gas_<your meter number>_current_rate
+  gasHotWaterEfficiency:                0.9 # Slightly high to allow for the fact that the hot water from the eddi will be used the next day, so will cool a bit before being used
+  eddiTargetPower:                      9
+  eddiPowerLimit:                       3
+  eddiOutputEntity:                     input_select.eddi_requested
+  eddiSolarPowerUsedTodayEntity:        sensor.myenergi_eddi_green_energy_today
+  eddiGridPowerUsedTodayEntity:         sensor.myenergi_eddi_energy_used_today
+  solarForecastTodayEntity:             sensor.solcast_forecast_today
+  solarForecastTomorrowEntity:          sensor.solcast_forecast_tomorrow
+  solarForecastD3Entity:                sensor.solcast_forecast_d3  
+  solarForecastMargin:                  0.8 # 0.9 would subtract 10% from solar forecasts as a margin for error. This only applies to samples that don't have percentile data
+  solarForecastLowPercentile:           30  # The pesermistic percentile to use for the forecast. This is used when calculating the charge to make sure the battery doesn't go flat
+  solarForecastHighPercentile:          60  # The optomistic percentile to use for the forecast. This is used when calculating the charge to make sure the battery doesn't get fully charged to early
+  solarLifetimeProductionEntity:        sensor.solaredge_fast_lifetime_production
+  exportRateEntityCurDay:               event.octopus_energy_electricity_<your meter number>_export_current_day_rates
+  exportRateEntityNextDay:              event.octopus_energy_electricity_<your meter number>_export_next_day_rates
+  importRateEntityCurDay:               event.octopus_energy_electricity_<your meter number>_current_day_rates
+  importRateEntityNextDay:              event.octopus_energy_electricity_<your meter number>_next_day_rates
+  savingSessionEntity:                  event.octopus_energy_a_<your id>_octoplus_saving_session_events
+  houseLoadEntity:                      sensor.powerwall_load_import
+  houseLoadMargin:                      1.20 # add 20% to usage forecasts as a margin for error
+  batteryCapacity:                      sensor.powerwall_capacity
+  batteryEnergy:                        sensor.powerwall_energy
+  batteryTargetReservePercentage:       20
+  batteryAbsMinReservePercentage:       8
+  batteryFullPercentage:                50  # The target % to consider the battery as full. By setting this a bit lower than 100% the algorithm won't try
+                                            # so hard to find changing slots in the middle of the day. It can also mean we leave a bit of room in the 
+                                            # battery in case these more solar than we expect in cheap periods. This should be high enough that we're 
+                                            # likely to make it to the next days charging opertunities
+  batteryChargeRateLimit:               15
+  batteryDischargeRateLimit:            15
+  batteryGridChargeRate:                12
+  gridExportLimit:                      11
+  batteryModeOutputEntity:              input_select.powerwall_requested_mode
+  batteryChargeCostEntity:              input_number.powerwall_charge_cost
+  batteryPlanSummaryEntity:             input_text.powerwall_plan_summary
+  batteryOutputTimeOffset:              -90
+  minBuySelMargin:                      0.08 # £/kwh. This is about the minimum to break even on the battery. Lower than this and the wear on the battery isn't worth it.
+  minBuySelNotFullMargin:               0.20 # £/kwh. Skip the battery full criteria if the profit is over this amount
+  minBuyUseMargin:                      0.05 # £/kwh. Similar to above, only this is used when working out whether to charge from the grid for our own usage
+  topUpCostTolerance:                   1.05 # Allows 5% over the existing charge rate when looking to top up the battery
+  tariffOverrideStart:                  input_datetime.electricity_tariff_override_start
+  tariffOverrideEnd:                    input_datetime.electricity_tariff_override_end
+  tariffOverridePrice:                  input_number.electricity_tariff_override_price
+  tariffOverrideType:                   input_select.electricity_tariff_override_type
+
+
+
+cheapest_time_washing_machine:
+  module:                               cheapestTime
+  class:                                CheapestTime
+  log_level:                            ERROR
+  batteryPlanSummaryEntity:             input_text.powerwall_plan_summary
+  programTimeEntity:                    sensor.bosch_<your machine model/number>_bsh_common_option_estimatedtotalprogramtime
+  startTimeEntity:                      input_text.washing_machine_start_time
+  finishByTimeEntity:                   input_datetime.washing_machine_finish_by
+  finishByOnEntity:                     input_boolean.washing_machine_finish_by
+  conditions:
+  - entity:        'binary_sensor.bosch_<your machine model/number>_bsh_common_status_remotecontrolstartallowed'
+    expectedValue: 'on'
+    invert:        false
+  - entity:        'select.bosch_<your machine model/number>_programs'
+    expectedValue: 'unknown'
+    invert:        true
+  - entity:        'binary_sensor.bosch_<your machine model/number>_bsh_common_status_doorstate'
+    expectedValue: 'off'
+  - entity:        'sensor.bosch_<your machine model/number>_bsh_common_status_operationstate'
+    expectedValue: 'Ready'
+

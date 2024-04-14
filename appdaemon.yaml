@@ -1,0 +1,22 @@
+appdaemon:
+  latitude: <your location>
+  longitude: <your location>
+  elevation: <your location>
+  time_zone: <your timezone>
+  missing_app_warnings: 0
+  plugins:
+    HASS:
+      type: hass
+      ha_url: <url of home assistant instance>
+      token: <enter your auth token here>
+http:
+  url: <url of appdaemon>
+admin:
+api:
+hadashboard:
+logs:
+  main_log:
+    filename: /conf/logs/appdaemon.log
+  error_log:
+    filename: /conf/logs/error.log
+  
